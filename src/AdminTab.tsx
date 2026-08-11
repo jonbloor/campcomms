@@ -93,6 +93,16 @@ function MigrationCheck() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not copy data to EU storage."); }
     finally { setBusy(false); }
   }
+  async function createSchema() {
+    if (!window.confirm("Create the CampComms table structure in the empty EU database? No current data will be changed.")) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api<{ tablesCreated: number }>("/api/admin/eu-schema", { method: "POST" });
+      setError(`EU database structure created: ${result.tablesCreated} tables.`);
+      await check();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not create the EU database structure."); }
+    finally { setBusy(false); }
+  }
   return <section className="admin-panel operations-panel">
     <header><div><p className="eyebrow">System administration</p><h2>EU storage migration</h2></div><ShieldCheck size={22} /></header>
     <p className="operations-note">This read-only check compares record and media counts. It does not copy, change or delete anything.</p>
@@ -107,6 +117,7 @@ function MigrationCheck() {
       <div><dt>Migration state</dt><dd>{status.readyToCopy ? "EU targets are empty and ready" : "EU targets contain data—review required"}</dd></div>
     </dl>}
     {status?.readyToCopy && <button className="primary-button" disabled={busy} onClick={() => void migrate()}>{busy ? "Copying and verifying…" : "Copy data to EU storage"}</button>}
+    {status && !status.schema.matches && status.eu.database.totalRows === 0 && <button className="primary-button" disabled={busy} onClick={() => void createSchema()}>{busy ? "Creating structure…" : "Create EU database structure"}</button>}
   </section>;
 }
 
