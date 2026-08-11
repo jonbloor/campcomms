@@ -346,10 +346,15 @@ app.get("/api/admin/eu-migration-status", async (c) => {
     bucketInventory(c.env.PHOTOS),
     bucketInventory(c.env.PHOTOS_EU),
   ]);
+  const sourceTables = Object.keys(sourceDatabase.tables);
+  const euTables = Object.keys(euDatabase.tables);
+  const missingInEu = sourceTables.filter((table) => !euTables.includes(table));
+  const extraInEu = euTables.filter((table) => !sourceTables.includes(table));
   return c.json({
     source: { database: sourceDatabase, media: sourceMedia },
     eu: { database: euDatabase, media: euMedia },
-    readyToCopy: euDatabase.totalRows === 0 && euMedia.objects === 0,
+    schema: { matches: missingInEu.length === 0 && extraInEu.length === 0, missingInEu, extraInEu },
+    readyToCopy: euDatabase.totalRows === 0 && euMedia.objects === 0 && missingInEu.length === 0 && extraInEu.length === 0,
   });
 });
 
@@ -357,22 +362,28 @@ app.post("/api/admin/eu-migration", async (c) => {
   if (c.get("user").email.toLowerCase() !== c.env.SYSTEM_ADMIN_EMAIL.toLowerCase()) {
     return c.json({ error: "System administrator access is required." }, 403);
   }
-  const before = await databaseInventory(c.env.DB_EU);
-  const euMediaBefore = await bucketInventory(c.env.PHOTOS_EU);
-  if (before.totalRows !== 0 || euMediaBefore.objects !== 0) {
-    return c.json({ error: "The EU targets are no longer empty. Migration stopped without changing the current resources." }, 409);
-  }
+  try {
+    const before = await databaseInventory(c.env.DB_EU);
+    const euMediaBefore = await bucketInventory(c.env.PHOTOS_EU);
+    if (before.totalRows !== 0 || euMediaBefore.objects !== 0) {
+      return c.json({ error: "The EU targets are no longer empty. Migration stopped without changing the current resources." }, 409);
+    }
 
-  const database = await copyDatabase(c.env.DB, c.env.DB_EU);
-  const media = await copyBucket(c.env.PHOTOS, c.env.PHOTOS_EU);
-  const [sourceDatabase, euDatabase, sourceMedia, euMedia] = await Promise.all([
-    databaseInventory(c.env.DB), databaseInventory(c.env.DB_EU), bucketInventory(c.env.PHOTOS), bucketInventory(c.env.PHOTOS_EU),
-  ]);
-  if (JSON.stringify(sourceDatabase.tables) !== JSON.stringify(euDatabase.tables)
-    || sourceMedia.objects !== euMedia.objects || sourceMedia.bytes !== euMedia.bytes) {
-    return c.json({ error: "Copy completed but verification did not match. Production has not been switched.", sourceDatabase, euDatabase, sourceMedia, euMedia }, 409);
+    const database = await copyDatabase(c.env.DB, c.env.DB_EU);
+    const media = await copyBucket(c.env.PHOTOS, c.env.PHOTOS_EU);
+    const [sourceDatabase, euDatabase, sourceMedia, euMedia] = await Promise.all([
+      databaseInventory(c.env.DB), databaseInventory(c.env.DB_EU), bucketInventory(c.env.PHOTOS), bucketInventory(c.env.PHOTOS_EU),
+    ]);
+    if (JSON.stringify(sourceDatabase.tables) !== JSON.stringify(euDatabase.tables)
+      || sourceMedia.objects !== euMedia.objects || sourceMedia.bytes !== euMedia.bytes) {
+      return c.json({ error: "Copy completed but verification did not match. Production has not been switched." }, 409);
+    }
+    return c.json({ ok: true, database, media, verifiedRows: euDatabase.totalRows, verifiedMediaObjects: euMedia.objects });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "Unknown migration error";
+    console.error(JSON.stringify({ level: "error", message: "EU migration failed", detail: message }));
+    return c.json({ error: `EU migration stopped safely: ${message}` }, 500);
   }
-  return c.json({ ok: true, database, media, verifiedRows: euDatabase.totalRows, verifiedMediaObjects: euMedia.objects });
 });
 
 app.get("/api/push/config", async (c) => {

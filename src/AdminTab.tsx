@@ -13,6 +13,7 @@ type AdminData = { event: EventDetails["event"]; members: AdminMember[]; operati
 type MigrationStatus = {
   source: { database: { totalRows: number; tables: Record<string, number> }; media: { objects: number; bytes: number } };
   eu: { database: { totalRows: number; tables: Record<string, number> }; media: { objects: number; bytes: number } };
+  schema: { matches: boolean; missingInEu: string[]; extraInEu: string[] };
   readyToCopy: boolean;
 };
 
@@ -102,6 +103,7 @@ function MigrationCheck() {
       <div><dt>EU database</dt><dd>{status.eu.database.totalRows} rows</dd></div>
       <div><dt>Current media</dt><dd>{status.source.media.objects} objects</dd></div>
       <div><dt>EU media</dt><dd>{status.eu.media.objects} objects</dd></div>
+      <div><dt>Database schema</dt><dd>{status.schema.matches ? "Matches" : `Mismatch: missing ${status.schema.missingInEu.join(", ") || "none"}; extra ${status.schema.extraInEu.join(", ") || "none"}`}</dd></div>
       <div><dt>Migration state</dt><dd>{status.readyToCopy ? "EU targets are empty and ready" : "EU targets contain data—review required"}</dd></div>
     </dl>}
     {status?.readyToCopy && <button className="primary-button" disabled={busy} onClick={() => void migrate()}>{busy ? "Copying and verifying…" : "Copy data to EU storage"}</button>}
