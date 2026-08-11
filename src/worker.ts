@@ -79,7 +79,7 @@ app.post("/api/auth/request-link", async (c) => {
   });
   await recordEmail(c.env.DB, user.id, "magic_link", delivery);
 
-  if (!delivery.ok && c.env.ENVIRONMENT !== "development") {
+  if (!delivery.ok && String(c.env.ENVIRONMENT) !== "development") {
     console.error(JSON.stringify({ level: "error", message: "Magic-link email failed", userId: user.id }));
   }
 
@@ -182,7 +182,7 @@ app.post("/photos/guest/verify", async (c) => {
     c.env.DB.prepare("INSERT INTO photo_guest_sessions (id, guest_id, token_hash, expires_at) VALUES (?, ?, ?, datetime('now', '+30 days'))").bind(crypto.randomUUID(), link.guest_id, await sha256(sessionToken)),
     c.env.DB.prepare("UPDATE photo_guests SET status = 'active' WHERE id = ?").bind(link.guest_id),
   ]);
-  setCookie(c, PHOTO_GUEST_COOKIE, sessionToken, { httpOnly: true, secure: c.env.ENVIRONMENT !== "development", sameSite: "Lax", path: "/", maxAge: 30 * 86_400 });
+  setCookie(c, PHOTO_GUEST_COOKIE, sessionToken, { httpOnly: true, secure: String(c.env.ENVIRONMENT) !== "development", sameSite: "Lax", path: "/", maxAge: 30 * 86_400 });
   return c.redirect("/photos/guest", 303);
 });
 
@@ -269,7 +269,7 @@ async function consumeMagicLink(c: AppContext, suppliedToken?: string) {
 
   setCookie(c, SESSION_COOKIE, sessionToken, {
     httpOnly: true,
-    secure: c.env.ENVIRONMENT !== "development",
+    secure: String(c.env.ENVIRONMENT) !== "development",
     sameSite: "Lax",
     path: "/",
     maxAge: SESSION_DAYS * 86_400,
