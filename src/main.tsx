@@ -128,7 +128,7 @@ function App() {
           {activeTab === "photos" && <PhotosTab details={details} onRefresh={refreshEvent} />}
           {activeTab === "private" && <PrivateTab eventId={details.event.id} membership={details.membership} me={me} onRefresh={refreshEvent} />}
           {activeTab === "info" && <InfoTab details={details} me={me} onProfileChanged={() => loadSession(selectedId ?? undefined)} />}
-          {activeTab === "admin" && details.membership.role === "event_admin" && <AdminTab details={details} onEventsChanged={loadSession} />}
+          {activeTab === "admin" && details.membership.role === "event_admin" && <AdminTab details={details} isSystemAdmin={me.user.isSystemAdmin} onEventsChanged={loadSession} />}
         </div>
       </main>
     </div>

@@ -10,8 +10,13 @@ type AdminMember = {
 };
 
 type AdminData = { event: EventDetails["event"]; members: AdminMember[]; operations: { emailPreferences: { daily: number; important_only: number; none: number }; pushDevices: number; recentDeliveries: { successful: number; failed: number; last_update: string | null } } };
+type MigrationStatus = {
+  source: { database: { totalRows: number; tables: Record<string, number> }; media: { objects: number; bytes: number } };
+  eu: { database: { totalRows: number; tables: Record<string, number> }; media: { objects: number; bytes: number } };
+  readyToCopy: boolean;
+};
 
-export function AdminTab({ details, onEventsChanged }: { details: EventDetails; onEventsChanged: (eventId?: string) => Promise<void> }) {
+export function AdminTab({ details, isSystemAdmin, onEventsChanged }: { details: EventDetails; isSystemAdmin: boolean; onEventsChanged: (eventId?: string) => Promise<void> }) {
   const [data, setData] = useState<AdminData | null>(null);
   const [dialog, setDialog] = useState<"invite" | "bulk" | "edit" | "create" | null>(null);
   const [notice, setNotice] = useState("");
@@ -57,6 +62,7 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
         </dl>
         <p className="operations-note">Parents control their own email choice. This panel reports delivery health without revealing message contents.</p>
       </section>
+      {isSystemAdmin && <MigrationCheck />}
     </div>
 
     {dialog === "invite" && <AdminModal title="Invite someone" onClose={() => setDialog(null)}><InviteForm eventId={details.event.id} onDone={async () => { setDialog(null); setNotice("Invitation sent."); await load(); }} /></AdminModal>}
@@ -64,6 +70,31 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
     {dialog === "edit" && <AdminModal title="Edit event" onClose={() => setDialog(null)}><EventForm event={data.event} onDone={async () => { setDialog(null); setNotice("Event settings saved."); await onEventsChanged(details.event.id); await load(); }} /></AdminModal>}
     {dialog === "create" && <AdminModal title="Create an event" onClose={() => setDialog(null)}><EventForm onDone={async (id) => { setDialog(null); await onEventsChanged(id); }} /></AdminModal>}
   </>;
+}
+
+function MigrationCheck() {
+  const [status, setStatus] = useState<MigrationStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function check() {
+    setBusy(true); setError("");
+    try { setStatus(await api<MigrationStatus>("/api/admin/eu-migration-status")); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not inspect EU storage."); }
+    finally { setBusy(false); }
+  }
+  return <section className="admin-panel operations-panel">
+    <header><div><p className="eyebrow">System administration</p><h2>EU storage migration</h2></div><ShieldCheck size={22} /></header>
+    <p className="operations-note">This read-only check compares record and media counts. It does not copy, change or delete anything.</p>
+    <button className="secondary-button" disabled={busy} onClick={() => void check()}>{busy ? "Checking…" : "Check EU storage"}</button>
+    {error && <p className="error-text">{error}</p>}
+    {status && <dl className="settings-list">
+      <div><dt>Current database</dt><dd>{status.source.database.totalRows} rows</dd></div>
+      <div><dt>EU database</dt><dd>{status.eu.database.totalRows} rows</dd></div>
+      <div><dt>Current media</dt><dd>{status.source.media.objects} objects</dd></div>
+      <div><dt>EU media</dt><dd>{status.eu.media.objects} objects</dd></div>
+      <div><dt>Migration state</dt><dd>{status.readyToCopy ? "EU targets are empty and ready" : "EU targets contain data—review required"}</dd></div>
+    </dl>}
+  </section>;
 }
 
 function MemberRow({ eventId, member, onChanged }: { eventId: string; member: AdminMember; onChanged: () => Promise<void> }) {
