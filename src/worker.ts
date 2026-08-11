@@ -353,6 +353,28 @@ app.get("/api/admin/eu-migration-status", async (c) => {
   });
 });
 
+app.post("/api/admin/eu-migration", async (c) => {
+  if (c.get("user").email.toLowerCase() !== c.env.SYSTEM_ADMIN_EMAIL.toLowerCase()) {
+    return c.json({ error: "System administrator access is required." }, 403);
+  }
+  const before = await databaseInventory(c.env.DB_EU);
+  const euMediaBefore = await bucketInventory(c.env.PHOTOS_EU);
+  if (before.totalRows !== 0 || euMediaBefore.objects !== 0) {
+    return c.json({ error: "The EU targets are no longer empty. Migration stopped without changing the current resources." }, 409);
+  }
+
+  const database = await copyDatabase(c.env.DB, c.env.DB_EU);
+  const media = await copyBucket(c.env.PHOTOS, c.env.PHOTOS_EU);
+  const [sourceDatabase, euDatabase, sourceMedia, euMedia] = await Promise.all([
+    databaseInventory(c.env.DB), databaseInventory(c.env.DB_EU), bucketInventory(c.env.PHOTOS), bucketInventory(c.env.PHOTOS_EU),
+  ]);
+  if (JSON.stringify(sourceDatabase.tables) !== JSON.stringify(euDatabase.tables)
+    || sourceMedia.objects !== euMedia.objects || sourceMedia.bytes !== euMedia.bytes) {
+    return c.json({ error: "Copy completed but verification did not match. Production has not been switched.", sourceDatabase, euDatabase, sourceMedia, euMedia }, 409);
+  }
+  return c.json({ ok: true, database, media, verifiedRows: euDatabase.totalRows, verifiedMediaObjects: euMedia.objects });
+});
+
 app.get("/api/push/config", async (c) => {
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = ?")
     .bind(c.get("user").id).first<{ count: number }>();
@@ -1716,6 +1738,67 @@ async function bucketInventory(bucket: R2Bucket) {
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
   return { objects, bytes };
+}
+
+const MIGRATION_TABLE_ORDER = [
+  "users", "children", "events", "parent_children", "event_memberships", "event_invitations",
+  "magic_links", "sessions", "announcements", "announcement_acknowledgements", "topics", "posts",
+  "private_threads", "private_messages", "lift_posts", "lift_responses", "photo_albums", "photos",
+  "push_subscriptions", "content_reads", "email_unsubscribe_tokens", "photo_guests", "photo_guest_links",
+  "photo_guest_sessions", "photo_views", "audit_logs", "email_deliveries", "d1_migrations",
+] as const;
+
+async function copyDatabase(source: D1Database, target: D1Database) {
+  const sourceTables = await source.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name",
+  ).all<{ name: string }>();
+  const targetTables = await target.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name",
+  ).all<{ name: string }>();
+  const sourceNames = sourceTables.results.map((row) => row.name).sort();
+  const targetNames = targetTables.results.map((row) => row.name).sort();
+  if (JSON.stringify(sourceNames) !== JSON.stringify(targetNames)) throw new Error("EU database schema does not match the current database.");
+  const unknown = sourceNames.filter((name) => !MIGRATION_TABLE_ORDER.includes(name as typeof MIGRATION_TABLE_ORDER[number]));
+  if (unknown.length) throw new Error(`Migration table order is missing: ${unknown.join(", ")}`);
+
+  const statements: D1PreparedStatement[] = [];
+  let rowsCopied = 0;
+  for (const table of MIGRATION_TABLE_ORDER) {
+    if (!sourceNames.includes(table)) continue;
+    const columnsResult = await source.prepare(`PRAGMA table_info(\"${table}\")`).all<{ name: string }>();
+    const columns = columnsResult.results.map((column) => column.name);
+    if (!columns.length || columns.some((column) => !/^[A-Za-z0-9_]+$/.test(column))) throw new Error(`Invalid schema for ${table}.`);
+    const rows = await source.prepare(`SELECT * FROM \"${table}\"`).all<Record<string, unknown>>();
+    if (!rows.results.length) continue;
+    const chunkSize = Math.max(1, Math.floor(80 / columns.length));
+    for (let offset = 0; offset < rows.results.length; offset += chunkSize) {
+      const chunk = rows.results.slice(offset, offset + chunkSize);
+      const placeholders = chunk.map(() => `(${columns.map(() => "?").join(",")})`).join(",");
+      const values = chunk.flatMap((row) => columns.map((column) => row[column] ?? null));
+      statements.push(target.prepare(`INSERT INTO \"${table}\" (${columns.map((column) => `\"${column}\"`).join(",")}) VALUES ${placeholders}`).bind(...values));
+      rowsCopied += chunk.length;
+    }
+  }
+  if (statements.length) await target.batch(statements);
+  return { rowsCopied, statements: statements.length };
+}
+
+async function copyBucket(source: R2Bucket, target: R2Bucket) {
+  let cursor: string | undefined;
+  let objectsCopied = 0;
+  let bytesCopied = 0;
+  do {
+    const page = await source.list({ cursor, limit: 1000 });
+    for (const item of page.objects) {
+      const object = await source.get(item.key);
+      if (!object) throw new Error(`Source media object disappeared during migration: ${item.key}`);
+      await target.put(item.key, object.body, { httpMetadata: object.httpMetadata, customMetadata: object.customMetadata });
+      objectsCopied += 1;
+      bytesCopied += item.size;
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return { objectsCopied, bytesCopied };
 }
 
 async function runRetention(env: Env) {

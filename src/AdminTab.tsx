@@ -82,6 +82,16 @@ function MigrationCheck() {
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not inspect EU storage."); }
     finally { setBusy(false); }
   }
+  async function migrate() {
+    if (!window.confirm("Copy all current CampComms data to the empty EU resources? The current resources will remain unchanged.")) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api<{ verifiedRows: number; verifiedMediaObjects: number }>("/api/admin/eu-migration", { method: "POST" });
+      setError(`Verified copy complete: ${result.verifiedRows} database rows and ${result.verifiedMediaObjects} media objects.`);
+      await check();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not copy data to EU storage."); }
+    finally { setBusy(false); }
+  }
   return <section className="admin-panel operations-panel">
     <header><div><p className="eyebrow">System administration</p><h2>EU storage migration</h2></div><ShieldCheck size={22} /></header>
     <p className="operations-note">This read-only check compares record and media counts. It does not copy, change or delete anything.</p>
@@ -94,6 +104,7 @@ function MigrationCheck() {
       <div><dt>EU media</dt><dd>{status.eu.media.objects} objects</dd></div>
       <div><dt>Migration state</dt><dd>{status.readyToCopy ? "EU targets are empty and ready" : "EU targets contain data—review required"}</dd></div>
     </dl>}
+    {status?.readyToCopy && <button className="primary-button" disabled={busy} onClick={() => void migrate()}>{busy ? "Copying and verifying…" : "Copy data to EU storage"}</button>}
   </section>;
 }
 
