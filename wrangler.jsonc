@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fourth-ashby-events",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "events-db",
+      "database_id": "b9376786-1e2b-4f4e-8ac1-8bb63c87d8e5",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "fourth-ashby-events-photos"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "4th Ashby CampComms",
+    "APP_ORIGIN": "https://campcomms.4thashby.org.uk",
+    "EMAIL_FROM": "4th Ashby CampComms <updates@notify.events.4thashby.org.uk>",
+    "SYSTEM_ADMIN_EMAIL": "jon@4thashby.org.uk",
+    "VAPID_PUBLIC_KEY": "BJa8CaN7cy__yFnILQFq8vtDpXlG6MBzw8XU6fuNPM7jfBnLCg2SQHFi7EmagE8CxDDC1QVhO-biUz2U_LEqaEI",
+    "ENVIRONMENT": "production"
+  },
+  "triggers": {
+    "crons": ["17 2 * * *", "0 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "routes": [
+    { "pattern": "campcomms.4thashby.org.uk", "custom_domain": true }
+  ]
+}
