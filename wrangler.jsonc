@@ -11,12 +11,6 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "events-db",
-      "database_id": "b9376786-1e2b-4f4e-8ac1-8bb63c87d8e5",
-      "migrations_dir": "migrations"
-    },
-    {
-      "binding": "DB_EU",
       "database_name": "campcomms-eu",
       "database_id": "d0c3528d-9bc3-41e4-89b4-1aff3768620a",
       "migrations_dir": "migrations"
@@ -25,10 +19,6 @@
   "r2_buckets": [
     {
       "binding": "PHOTOS",
-      "bucket_name": "fourth-ashby-events-photos"
-    },
-    {
-      "binding": "PHOTOS_EU",
       "bucket_name": "campcomms-media-eu",
       "jurisdiction": "eu"
     }

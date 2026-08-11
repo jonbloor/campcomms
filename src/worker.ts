@@ -3,17 +3,6 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import webpush from "web-push";
-import migration0001 from "../migrations/0001_initial.sql?raw";
-import migration0002 from "../migrations/0002_event_administration.sql?raw";
-import migration0003 from "../migrations/0003_profiles_and_push.sql?raw";
-import migration0004 from "../migrations/0004_photo_albums.sql?raw";
-import migration0005 from "../migrations/0005_conversations.sql?raw";
-import migration0006 from "../migrations/0006_leader_permissions.sql?raw";
-import migration0007 from "../migrations/0007_email_notifications.sql?raw";
-import migration0008 from "../migrations/0008_prelaunch_operations.sql?raw";
-import migration0009 from "../migrations/0009_camp_media_and_guests.sql?raw";
-import migration0010 from "../migrations/0010_young_leader_role.sql?raw";
-import migration0011 from "../migrations/0011_lost_and_found.sql?raw";
 
 type User = { id: string; email: string; display_name: string; parent_of: string; status: string; email_notification_preference: EmailPreference };
 type EmailPreference = "daily" | "important_only" | "none";
@@ -345,80 +334,6 @@ app.patch("/api/me", async (c) => {
   await c.env.DB.prepare("INSERT INTO audit_logs (id, actor_id, action, target_type, target_id) VALUES (?, ?, 'profile.updated', 'user', ?)")
     .bind(crypto.randomUUID(), c.get("user").id, c.get("user").id).run();
   return c.json({ user: { id: c.get("user").id, email: c.get("user").email, displayName, parentOf, emailNotificationPreference: c.get("user").email_notification_preference } });
-});
-
-app.get("/api/admin/eu-migration-status", async (c) => {
-  if (c.get("user").email.toLowerCase() !== c.env.SYSTEM_ADMIN_EMAIL.toLowerCase()) {
-    return c.json({ error: "System administrator access is required." }, 403);
-  }
-  const [sourceDatabase, euDatabase, sourceMedia, euMedia] = await Promise.all([
-    databaseInventory(c.env.DB),
-    databaseInventory(c.env.DB_EU),
-    bucketInventory(c.env.PHOTOS),
-    bucketInventory(c.env.PHOTOS_EU),
-  ]);
-  const sourceTables = Object.keys(sourceDatabase.tables);
-  const euTables = Object.keys(euDatabase.tables);
-  const missingInEu = sourceTables.filter((table) => !euTables.includes(table));
-  const extraInEu = euTables.filter((table) => !sourceTables.includes(table));
-  return c.json({
-    source: { database: sourceDatabase, media: sourceMedia },
-    eu: { database: euDatabase, media: euMedia },
-    schema: { matches: missingInEu.length === 0 && extraInEu.length === 0, missingInEu, extraInEu },
-    readyToCopy: euDatabase.totalRows === 0 && euMedia.objects === 0 && missingInEu.length === 0 && extraInEu.length === 0,
-  });
-});
-
-app.post("/api/admin/eu-migration", async (c) => {
-  if (c.get("user").email.toLowerCase() !== c.env.SYSTEM_ADMIN_EMAIL.toLowerCase()) {
-    return c.json({ error: "System administrator access is required." }, 403);
-  }
-  try {
-    const before = await databaseInventory(c.env.DB_EU);
-    const euMediaBefore = await bucketInventory(c.env.PHOTOS_EU);
-    if (before.totalRows !== 0 || euMediaBefore.objects !== 0) {
-      return c.json({ error: "The EU targets are no longer empty. Migration stopped without changing the current resources." }, 409);
-    }
-
-    const database = await copyDatabase(c.env.DB, c.env.DB_EU);
-    const media = await copyBucket(c.env.PHOTOS, c.env.PHOTOS_EU);
-    const [sourceDatabase, euDatabase, sourceMedia, euMedia] = await Promise.all([
-      databaseInventory(c.env.DB), databaseInventory(c.env.DB_EU), bucketInventory(c.env.PHOTOS), bucketInventory(c.env.PHOTOS_EU),
-    ]);
-    if (JSON.stringify(sourceDatabase.tables) !== JSON.stringify(euDatabase.tables)
-      || sourceMedia.objects !== euMedia.objects || sourceMedia.bytes !== euMedia.bytes) {
-      return c.json({ error: "Copy completed but verification did not match. Production has not been switched." }, 409);
-    }
-    return c.json({ ok: true, database, media, verifiedRows: euDatabase.totalRows, verifiedMediaObjects: euMedia.objects });
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Unknown migration error";
-    console.error(JSON.stringify({ level: "error", message: "EU migration failed", detail: message }));
-    return c.json({ error: `EU migration stopped safely: ${message}` }, 500);
-  }
-});
-
-app.post("/api/admin/eu-schema", async (c) => {
-  if (c.get("user").email.toLowerCase() !== c.env.SYSTEM_ADMIN_EMAIL.toLowerCase()) {
-    return c.json({ error: "System administrator access is required." }, 403);
-  }
-  try {
-    const inventory = await databaseInventory(c.env.DB_EU);
-    if (Object.keys(inventory.tables).length || inventory.totalRows) {
-      return c.json({ error: "The EU database already contains application tables. Schema creation stopped." }, 409);
-    }
-    const statements = EU_SCHEMA_MIGRATIONS.flatMap((migration) => migration.split(";"))
-      .map((statement) => statement.trim())
-      .filter((statement) => statement && !/^PRAGMA\s+foreign_keys/i.test(statement))
-      .map((statement) => c.env.DB_EU.prepare(statement));
-    await c.env.DB_EU.batch(statements);
-    const [source, eu] = await Promise.all([databaseInventory(c.env.DB), databaseInventory(c.env.DB_EU)]);
-    const matches = JSON.stringify(Object.keys(source.tables)) === JSON.stringify(Object.keys(eu.tables));
-    if (!matches) return c.json({ error: "EU schema was created but did not match the current database." }, 409);
-    return c.json({ ok: true, tablesCreated: Object.keys(eu.tables).length });
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Unknown schema error";
-    return c.json({ error: `EU schema creation stopped safely: ${message}` }, 500);
-  }
 });
 
 app.get("/api/push/config", async (c) => {
@@ -1758,98 +1673,6 @@ export async function validResendWebhook(secret: string, headers: Headers, body:
     } catch { /* Try any remaining signature. */ }
   }
   return false;
-}
-
-async function databaseInventory(database: D1Database) {
-  const tables = await database.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name != 'd1_migrations' ORDER BY name",
-  ).all<{ name: string }>();
-  const counts: Record<string, number> = {};
-  for (const row of tables.results) {
-    if (!/^[A-Za-z0-9_]+$/.test(row.name)) continue;
-    const result = await database.prepare(`SELECT COUNT(*) AS count FROM \"${row.name}\"`).first<{ count: number }>();
-    counts[row.name] = Number(result?.count ?? 0);
-  }
-  return { tables: counts, totalRows: Object.values(counts).reduce((sum, count) => sum + count, 0) };
-}
-
-async function bucketInventory(bucket: R2Bucket) {
-  let cursor: string | undefined;
-  let objects = 0;
-  let bytes = 0;
-  do {
-    const page = await bucket.list({ cursor, limit: 1000 });
-    objects += page.objects.length;
-    bytes += page.objects.reduce((sum, object) => sum + object.size, 0);
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
-  return { objects, bytes };
-}
-
-const MIGRATION_TABLE_ORDER = [
-  "users", "children", "events", "parent_children", "event_memberships", "event_invitations",
-  "magic_links", "sessions", "announcements", "announcement_acknowledgements", "topics", "posts",
-  "private_threads", "private_messages", "lift_posts", "lift_responses", "photo_albums", "photos",
-  "push_subscriptions", "content_reads", "email_unsubscribe_tokens", "photo_guests", "photo_guest_links",
-  "photo_guest_sessions", "photo_views", "audit_logs", "email_deliveries",
-] as const;
-
-const EU_SCHEMA_MIGRATIONS = [
-  migration0001, migration0002, migration0003, migration0004, migration0005, migration0006,
-  migration0007, migration0008, migration0009, migration0010, migration0011,
-];
-
-async function copyDatabase(source: D1Database, target: D1Database) {
-  const sourceTables = await source.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name != 'd1_migrations' ORDER BY name",
-  ).all<{ name: string }>();
-  const targetTables = await target.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name != 'd1_migrations' ORDER BY name",
-  ).all<{ name: string }>();
-  const sourceNames = sourceTables.results.map((row) => row.name).sort();
-  const targetNames = targetTables.results.map((row) => row.name).sort();
-  if (JSON.stringify(sourceNames) !== JSON.stringify(targetNames)) throw new Error("EU database schema does not match the current database.");
-  const unknown = sourceNames.filter((name) => !MIGRATION_TABLE_ORDER.includes(name as typeof MIGRATION_TABLE_ORDER[number]));
-  if (unknown.length) throw new Error(`Migration table order is missing: ${unknown.join(", ")}`);
-
-  const statements: D1PreparedStatement[] = [];
-  let rowsCopied = 0;
-  for (const table of MIGRATION_TABLE_ORDER) {
-    if (!sourceNames.includes(table)) continue;
-    const columnsResult = await source.prepare(`PRAGMA table_info(\"${table}\")`).all<{ name: string }>();
-    const columns = columnsResult.results.map((column) => column.name);
-    if (!columns.length || columns.some((column) => !/^[A-Za-z0-9_]+$/.test(column))) throw new Error(`Invalid schema for ${table}.`);
-    const rows = await source.prepare(`SELECT * FROM \"${table}\"`).all<Record<string, unknown>>();
-    if (!rows.results.length) continue;
-    const chunkSize = Math.max(1, Math.floor(80 / columns.length));
-    for (let offset = 0; offset < rows.results.length; offset += chunkSize) {
-      const chunk = rows.results.slice(offset, offset + chunkSize);
-      const placeholders = chunk.map(() => `(${columns.map(() => "?").join(",")})`).join(",");
-      const values = chunk.flatMap((row) => columns.map((column) => row[column] ?? null));
-      statements.push(target.prepare(`INSERT INTO \"${table}\" (${columns.map((column) => `\"${column}\"`).join(",")}) VALUES ${placeholders}`).bind(...values));
-      rowsCopied += chunk.length;
-    }
-  }
-  if (statements.length) await target.batch(statements);
-  return { rowsCopied, statements: statements.length };
-}
-
-async function copyBucket(source: R2Bucket, target: R2Bucket) {
-  let cursor: string | undefined;
-  let objectsCopied = 0;
-  let bytesCopied = 0;
-  do {
-    const page = await source.list({ cursor, limit: 1000 });
-    for (const item of page.objects) {
-      const object = await source.get(item.key);
-      if (!object) throw new Error(`Source media object disappeared during migration: ${item.key}`);
-      await target.put(item.key, object.body, { httpMetadata: object.httpMetadata, customMetadata: object.customMetadata });
-      objectsCopied += 1;
-      bytesCopied += item.size;
-    }
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
-  return { objectsCopied, bytesCopied };
 }
 
 async function runRetention(env: Env) {

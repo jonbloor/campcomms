@@ -8,12 +8,17 @@ import {
 import { api, ApiError, type EventDetails, type EventSummary } from "./api";
 import { AdminTab, EventForm } from "./AdminTab";
 import { PhotosTab } from "./PhotosTab";
+import { PrivacyNotice } from "./PrivacyNotice";
 import "./styles.css";
 
 type Me = { user: { id: string; email: string; displayName: string; parentOf: string; emailNotificationPreference: "daily" | "important_only" | "none"; isSystemAdmin: boolean }; children: Array<{ id: string; display_name: string }> };
 type Tab = "home" | "discuss" | "lost-found" | "lifts" | "photos" | "private" | "info" | "admin";
 
 function App() {
+  return window.location.pathname === "/privacy" ? <PrivacyNotice /> : <CampCommsApp />;
+}
+
+function CampCommsApp() {
   const [me, setMe] = useState<Me | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -128,7 +133,7 @@ function App() {
           {activeTab === "photos" && <PhotosTab details={details} onRefresh={refreshEvent} />}
           {activeTab === "private" && <PrivateTab eventId={details.event.id} membership={details.membership} me={me} onRefresh={refreshEvent} />}
           {activeTab === "info" && <InfoTab details={details} me={me} onProfileChanged={() => loadSession(selectedId ?? undefined)} />}
-          {activeTab === "admin" && details.membership.role === "event_admin" && <AdminTab details={details} isSystemAdmin={me.user.isSystemAdmin} onEventsChanged={loadSession} />}
+          {activeTab === "admin" && details.membership.role === "event_admin" && <AdminTab details={details} onEventsChanged={loadSession} />}
         </div>
       </main>
     </div>
@@ -163,6 +168,7 @@ function SignIn({ error }: { error: string }) {
           <button className="primary-button" disabled={busy}>{busy ? "Sending…" : "Email me a secure link"}<Send size={17} /></button>
           {message && <div className="form-message"><ShieldCheck size={19} /><span>{message}</span></div>}
           <small className="safety-note"><CircleAlert size={15} /> This service is not monitored for emergencies.</small>
+          <a className="privacy-link" href="/privacy">Privacy notice</a>
         </form>
       </div>
     </div>
@@ -327,6 +333,7 @@ function InfoTab({ details, me, onProfileChanged }: { details: EventDetails; me:
     <InfoCard icon={ShieldCheck} title="Retention" value={`Read-only until ${formatDate(details.event.read_only_until)}`} />
   </div>
   <div className="settings-grid"><ProfileSettings me={me} onDone={onProfileChanged} /><PushSettings /><EmailSettings me={me} onDone={onProfileChanged} /></div>
+  <section className="privacy-summary"><ShieldCheck size={22} /><div><h3>Your privacy</h3><p>Read how CampComms uses, protects and deletes personal information.</p><a href="/privacy">Read the CampComms privacy notice</a></div></section>
   <div className="emergency-card"><CircleAlert size={24} /><div><h3>Not for emergencies</h3><p>This service is not monitored continuously. For emergencies or urgent changes requiring an immediate response, use the contact arrangements supplied by the event leadership team.</p></div></div></>;
 }
 
