@@ -75,6 +75,8 @@ Lost & Found remains writable until the event's configured `read_only_until` dat
 
 Version 1.1.1 makes emailed sign-in and photo-guest invitation links resistant to email-security scanners. Opening a link now presents a confirmation button; the one-time token is consumed only when the recipient explicitly continues.
 
+Production deployments are built automatically by Cloudflare Workers Builds when a reviewed commit reaches the `main` branch of the private GitHub repository.
+
 ## Local development
 
 Requirements: Node.js 20 or later and a current Wrangler 4 release.
