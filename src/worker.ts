@@ -336,6 +336,23 @@ app.patch("/api/me", async (c) => {
   return c.json({ user: { id: c.get("user").id, email: c.get("user").email, displayName, parentOf, emailNotificationPreference: c.get("user").email_notification_preference } });
 });
 
+app.get("/api/admin/eu-migration-status", async (c) => {
+  if (c.get("user").email.toLowerCase() !== c.env.SYSTEM_ADMIN_EMAIL.toLowerCase()) {
+    return c.json({ error: "System administrator access is required." }, 403);
+  }
+  const [sourceDatabase, euDatabase, sourceMedia, euMedia] = await Promise.all([
+    databaseInventory(c.env.DB),
+    databaseInventory(c.env.DB_EU),
+    bucketInventory(c.env.PHOTOS),
+    bucketInventory(c.env.PHOTOS_EU),
+  ]);
+  return c.json({
+    source: { database: sourceDatabase, media: sourceMedia },
+    eu: { database: euDatabase, media: euMedia },
+    readyToCopy: euDatabase.totalRows === 0 && euMedia.objects === 0,
+  });
+});
+
 app.get("/api/push/config", async (c) => {
   const count = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = ?")
     .bind(c.get("user").id).first<{ count: number }>();
@@ -1673,6 +1690,32 @@ export async function validResendWebhook(secret: string, headers: Headers, body:
     } catch { /* Try any remaining signature. */ }
   }
   return false;
+}
+
+async function databaseInventory(database: D1Database) {
+  const tables = await database.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name",
+  ).all<{ name: string }>();
+  const counts: Record<string, number> = {};
+  for (const row of tables.results) {
+    if (!/^[A-Za-z0-9_]+$/.test(row.name)) continue;
+    const result = await database.prepare(`SELECT COUNT(*) AS count FROM \"${row.name}\"`).first<{ count: number }>();
+    counts[row.name] = Number(result?.count ?? 0);
+  }
+  return { tables: counts, totalRows: Object.values(counts).reduce((sum, count) => sum + count, 0) };
+}
+
+async function bucketInventory(bucket: R2Bucket) {
+  let cursor: string | undefined;
+  let objects = 0;
+  let bytes = 0;
+  do {
+    const page = await bucket.list({ cursor, limit: 1000 });
+    objects += page.objects.length;
+    bytes += page.objects.reduce((sum, object) => sum + object.size, 0);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return { objects, bytes };
 }
 
 async function runRetention(env: Env) {
