@@ -289,8 +289,78 @@ app.post("/api/auth/logout", async (c) => {
   return c.json({ ok: true });
 });
 
+const ACCESS_REQUEST_RESPONSE = { ok: true, message: "Thanks. An event administrator will review your request and contact you by email if access is approved." };
+
+app.get("/api/access-request-events", async (c) => {
+  await ensureAccessRequestSchema(c.env.DB);
+  const events = await c.env.DB.prepare(
+    `SELECT e.id, e.name, e.section, e.starts_at, e.ends_at
+     FROM events e JOIN event_access_settings eas ON eas.event_id = e.id
+     WHERE eas.accepting_requests = 1 AND e.status IN ('draft', 'open') AND e.purge_after > datetime('now')
+     ORDER BY e.starts_at`,
+  ).all();
+  return c.json({ events: events.results });
+});
+
+app.post("/api/access-requests", async (c) => {
+  await ensureAccessRequestSchema(c.env.DB);
+  const body = await safeJson<{ eventId?: string; email?: string; displayName?: string; parentOf?: string; note?: string; website?: string }>(c.req.raw);
+  if (cleanText(body.website, 200)) return c.json(ACCESS_REQUEST_RESPONSE);
+  const email = normaliseEmail(body.email);
+  const displayName = cleanText(body.displayName, 120);
+  const parentOf = cleanText(body.parentOf, 160);
+  const note = cleanText(body.note, 800);
+  const eventId = cleanText(body.eventId, 80);
+  if (!email || !displayName || !eventId) return c.json({ error: "Choose an event and enter your name and a valid email address." }, 400);
+
+  const ipHash = await sha256(c.req.header("CF-Connecting-IP") ?? "unknown");
+  const recent = await c.env.DB.prepare("SELECT COUNT(*) AS count FROM access_requests WHERE requested_ip_hash = ? AND created_at > datetime('now', '-24 hours')")
+    .bind(ipHash).first<{ count: number }>();
+  if ((recent?.count ?? 0) >= 5) return c.json(ACCESS_REQUEST_RESPONSE);
+
+  const available = await c.env.DB.prepare(
+    `SELECT e.id, e.name FROM events e JOIN event_access_settings eas ON eas.event_id = e.id
+     WHERE e.id = ? AND eas.accepting_requests = 1 AND e.status IN ('draft', 'open') AND e.purge_after > datetime('now')`,
+  ).bind(eventId).first<{ id: string; name: string }>();
+  if (!available) return c.json(ACCESS_REQUEST_RESPONSE);
+  const member = await c.env.DB.prepare(
+    "SELECT 1 FROM users u JOIN event_memberships em ON em.user_id = u.id WHERE em.event_id = ? AND u.email = ? COLLATE NOCASE",
+  ).bind(eventId, email).first();
+  if (member) return c.json(ACCESS_REQUEST_RESPONSE);
+
+  const existing = await c.env.DB.prepare("SELECT id FROM access_requests WHERE event_id = ? AND email = ? COLLATE NOCASE AND status = 'pending'")
+    .bind(eventId, email).first<{ id: string }>();
+  const requestId = existing?.id ?? crypto.randomUUID();
+  if (existing) {
+    await c.env.DB.prepare(
+      "UPDATE access_requests SET display_name = ?, parent_of = ?, note = ?, requested_ip_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ).bind(displayName, parentOf, note, ipHash, requestId).run();
+  } else {
+    await c.env.DB.prepare(
+      "INSERT INTO access_requests (id, event_id, email, display_name, parent_of, note, requested_ip_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).bind(requestId, eventId, email, displayName, parentOf, note, ipHash).run();
+    const admins = await c.env.DB.prepare(
+      `SELECT u.id, u.email, u.display_name FROM users u JOIN event_memberships em ON em.user_id = u.id
+       WHERE em.event_id = ? AND em.role = 'event_admin' AND u.status != 'suspended'`,
+    ).bind(eventId).all<{ id: string; email: string; display_name: string }>();
+    for (const admin of admins.results) {
+      const delivery = await sendEmail(c.env, {
+        to: admin.email,
+        subject: `CampComms access request for ${available.name}`,
+        purpose: "access_request",
+        html: accessRequestEmail(admin.display_name, available.name, `${c.env.APP_ORIGIN}/?tab=admin`),
+      });
+      await recordEmail(c.env.DB, admin.id, "access_request", delivery, eventId);
+    }
+    await c.env.DB.prepare(
+      "INSERT INTO audit_logs (id, event_id, action, target_type, target_id, metadata_json) VALUES (?, ?, 'access_request.created', 'access_request', ?, ?)",
+    ).bind(crypto.randomUUID(), eventId, requestId, JSON.stringify({ emailHash: await sha256(email) })).run();
+  }
+  return c.json(ACCESS_REQUEST_RESPONSE, 201);
+});
+
 app.use("/api/*", async (c, next) => {
-  if (c.req.path.startsWith("/api/auth/") || c.req.path.startsWith("/api/photo-guest") || c.req.path === "/api/health" || c.req.path === "/api/resend/webhook") {
+  if (c.req.path.startsWith("/api/auth/") || c.req.path.startsWith("/api/photo-guest") || c.req.path.startsWith("/api/access-request") || c.req.path === "/api/access-requests" || c.req.path === "/api/health" || c.req.path === "/api/resend/webhook") {
     return next();
   }
   const token = getCookie(c, SESSION_COOKIE);
@@ -1004,6 +1074,7 @@ app.delete("/api/events/:eventId/lifts/:liftId", async (c) => {
 app.get("/api/admin/events/:eventId", async (c) => {
   const membership = await requireMembership(c, c.req.param("eventId"), ["event_admin"]);
   if (membership instanceof Response) return membership;
+  await ensureAccessRequestSchema(c.env.DB);
   const [event, members] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM events WHERE id = ?").bind(membership.event_id).first(),
     c.env.DB.prepare(
@@ -1017,7 +1088,7 @@ app.get("/api/admin/events/:eventId", async (c) => {
        WHERE em.event_id = ? ORDER BY CASE em.role WHEN 'event_admin' THEN 0 WHEN 'safeguarding' THEN 1 WHEN 'leader' THEN 2 ELSE 3 END, u.display_name`,
     ).bind(membership.event_id).all(),
   ]);
-  const [emailPreferences, pushDevices, recentDeliveries] = await Promise.all([
+  const [emailPreferences, pushDevices, recentDeliveries, accessSetting, accessRequests] = await Promise.all([
     c.env.DB.prepare(
       `SELECT
         SUM(CASE WHEN u.email_notification_preference = 'daily' THEN 1 ELSE 0 END) AS daily,
@@ -1037,8 +1108,60 @@ app.get("/api/admin/events/:eventId", async (c) => {
        WHERE em.event_id = ? AND (ed.event_id = ? OR (ed.event_id IS NULL AND ed.purpose = 'daily_digest'))
          AND ed.created_at > datetime('now', '-30 days')`,
     ).bind(membership.event_id, membership.event_id).first(),
+    c.env.DB.prepare("SELECT accepting_requests FROM event_access_settings WHERE event_id = ?").bind(membership.event_id).first<{ accepting_requests: number }>(),
+    c.env.DB.prepare(
+      "SELECT id, email, display_name, parent_of, note, created_at FROM access_requests WHERE event_id = ? AND status = 'pending' ORDER BY created_at",
+    ).bind(membership.event_id).all(),
   ]);
-  return c.json({ event, members: members.results, operations: { emailPreferences, pushDevices: pushDevices?.count ?? 0, recentDeliveries } });
+  return c.json({ event, members: members.results, acceptingAccessRequests: Boolean(accessSetting?.accepting_requests), accessRequests: accessRequests.results, operations: { emailPreferences, pushDevices: pushDevices?.count ?? 0, recentDeliveries } });
+});
+
+app.patch("/api/admin/events/:eventId/access-request-settings", async (c) => {
+  const membership = await requireMembership(c, c.req.param("eventId"), ["event_admin"]);
+  if (membership instanceof Response) return membership;
+  await ensureAccessRequestSchema(c.env.DB);
+  const body = await safeJson<{ accepting?: boolean }>(c.req.raw);
+  if (typeof body.accepting !== "boolean") return c.json({ error: "Choose whether this event accepts access requests." }, 400);
+  await c.env.DB.prepare(
+    `INSERT INTO event_access_settings (event_id, accepting_requests) VALUES (?, ?)
+     ON CONFLICT(event_id) DO UPDATE SET accepting_requests = excluded.accepting_requests, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(membership.event_id, body.accepting ? 1 : 0).run();
+  await audit(c.env.DB, c.get("user").id, membership.event_id, "access_requests.setting_updated", "event", membership.event_id, { accepting: body.accepting });
+  return c.json({ ok: true });
+});
+
+app.post("/api/admin/events/:eventId/access-requests/:requestId/approve", async (c) => {
+  const membership = await requireMembership(c, c.req.param("eventId"), ["event_admin"]);
+  if (membership instanceof Response) return membership;
+  await ensureAccessRequestSchema(c.env.DB);
+  const body = await safeJson<{ role?: string }>(c.req.raw);
+  const role = body.role === "young_leader" ? "young_leader" : body.role === "parent" ? "parent" : null;
+  if (!role) return c.json({ error: "Approve as a parent or Young Leader." }, 400);
+  const request = await c.env.DB.prepare(
+    "SELECT id, email, display_name, parent_of FROM access_requests WHERE id = ? AND event_id = ? AND status = 'pending'",
+  ).bind(c.req.param("requestId"), membership.event_id).first<{ id: string; email: string; display_name: string; parent_of: string }>();
+  if (!request) return c.json({ error: "That access request is no longer pending." }, 404);
+  const result = await inviteMember(c, membership.event_id, { email: request.email, displayName: request.display_name, role });
+  if (result instanceof Response) return result;
+  if (request.parent_of) await c.env.DB.prepare("UPDATE users SET parent_of = CASE WHEN parent_of = '' THEN ? ELSE parent_of END, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(request.parent_of, result.id).run();
+  await c.env.DB.prepare(
+    "UPDATE access_requests SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+  ).bind(c.get("user").id, request.id).run();
+  await audit(c.env.DB, c.get("user").id, membership.event_id, "access_request.approved", "access_request", request.id, { role });
+  return c.json({ ok: true, invited: result.invited });
+});
+
+app.post("/api/admin/events/:eventId/access-requests/:requestId/decline", async (c) => {
+  const membership = await requireMembership(c, c.req.param("eventId"), ["event_admin"]);
+  if (membership instanceof Response) return membership;
+  await ensureAccessRequestSchema(c.env.DB);
+  const result = await c.env.DB.prepare(
+    "UPDATE access_requests SET status = 'declined', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND event_id = ? AND status = 'pending'",
+  ).bind(c.get("user").id, c.req.param("requestId"), membership.event_id).run();
+  if (!result.meta.changes) return c.json({ error: "That access request is no longer pending." }, 404);
+  await audit(c.env.DB, c.get("user").id, membership.event_id, "access_request.declined", "access_request", c.req.param("requestId"));
+  return c.json({ ok: true });
 });
 
 app.post("/api/admin/events", async (c) => {
@@ -1553,6 +1676,10 @@ function invitationEmail(name: string, url: string) {
   return `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#222;line-height:1.5"><div style="max-width:560px;margin:auto;padding:28px"><h1 style="font-size:24px;color:#7413dc">You’re invited to 4th Ashby CampComms</h1><p>Hello ${escapeHtml(name)},</p><p>You have been invited to a private event hub for updates, conversations, lift sharing and photographs.</p><p><a href="${escapeHtml(url)}" style="display:inline-block;background:#7413dc;color:white;padding:12px 18px;border-radius:8px;text-decoration:none">Accept invitation</a></p><p style="color:#66756f;font-size:14px">This link expires in 48 hours and works once. Your email address and telephone number are not shown to other parents.</p></div></body></html>`;
 }
 
+function accessRequestEmail(name: string, eventName: string, url: string) {
+  return `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#222;line-height:1.5"><div style="max-width:560px;margin:auto;padding:28px"><h1 style="font-size:24px;color:#7413dc">New CampComms access request</h1><p>Hello ${escapeHtml(name)},</p><p>Someone has requested access to <strong>${escapeHtml(eventName)}</strong>. Sign in to review the request in Manage.</p><p><a href="${escapeHtml(url)}" style="display:inline-block;background:#7413dc;color:white;padding:12px 18px;border-radius:8px;text-decoration:none">Review request</a></p><p style="color:#66756f;font-size:14px">No access is granted until an administrator approves the request.</p></div></body></html>`;
+}
+
 function photoGuestEmail(name: string, eventName: string, url: string) {
   return `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#222;line-height:1.5"><div style="max-width:560px;margin:auto;padding:28px"><h1 style="font-size:24px;color:#7413dc">Private photographs from ${escapeHtml(eventName)}</h1><p>Hello ${escapeHtml(name)},</p><p>An event administrator has invited you to view this event’s private photo albums. This does not give access to CampComms messages or parent information.</p><p><a href="${escapeHtml(url)}" style="display:inline-block;background:#7413dc;color:white;padding:12px 18px;border-radius:8px;text-decoration:none">View private photographs</a></p><p style="color:#66756f;font-size:14px">The invitation expires in 48 hours and works once. Please do not download or share photographs on social media.</p></div></body></html>`;
 }
@@ -1681,6 +1808,7 @@ export async function validResendWebhook(secret: string, headers: Headers, body:
 }
 
 async function runRetention(env: Env) {
+  await ensureAccessRequestSchema(env.DB);
   const duePhotos = await env.DB.prepare(
     `SELECT p.id, p.original_key, p.display_key, p.thumbnail_key, p.video_key FROM photos p
      JOIN photo_albums pa ON pa.id = p.album_id JOIN events e ON e.id = pa.event_id
@@ -1692,9 +1820,38 @@ async function runRetention(env: Env) {
     env.DB.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')"),
     env.DB.prepare("DELETE FROM photo_guest_links WHERE expires_at <= datetime('now') OR used_at IS NOT NULL"),
     env.DB.prepare("DELETE FROM photo_guest_sessions WHERE expires_at <= datetime('now')"),
+    env.DB.prepare("DELETE FROM access_requests WHERE status != 'pending' AND reviewed_at <= datetime('now', '-30 days')"),
+    env.DB.prepare("DELETE FROM access_requests WHERE status = 'pending' AND created_at <= datetime('now', '-30 days')"),
     env.DB.prepare("UPDATE lift_posts SET status = 'expired' WHERE expires_at <= datetime('now') AND status = 'open'"),
     env.DB.prepare("UPDATE events SET status = 'read_only' WHERE posting_closes_at <= datetime('now') AND status = 'open'"),
     env.DB.prepare("DELETE FROM events WHERE purge_after <= datetime('now')"),
+  ]);
+}
+
+async function ensureAccessRequestSchema(db: D1Database) {
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS event_access_settings (
+      event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+      accepting_requests INTEGER NOT NULL DEFAULT 0 CHECK (accepting_requests IN (0, 1)),
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS access_requests (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      email TEXT NOT NULL COLLATE NOCASE,
+      display_name TEXT NOT NULL,
+      parent_of TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined')),
+      requested_ip_hash TEXT NOT NULL,
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_access_requests_pending ON access_requests(event_id, email) WHERE status = 'pending'"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_access_requests_event ON access_requests(event_id, status, created_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_access_requests_ip ON access_requests(requested_ip_hash, created_at DESC)"),
   ]);
 }
 

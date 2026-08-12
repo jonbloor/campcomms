@@ -144,6 +144,7 @@ function SignIn({ error }: { error: string }) {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState(error);
   const [busy, setBusy] = useState(false);
+  const [requestingAccess, setRequestingAccess] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
@@ -166,13 +167,46 @@ function SignIn({ error }: { error: string }) {
           <p>Enter the email address that received your invitation. We’ll send you a one-time link.</p>
           <label>Email address<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.org" required autoComplete="email" /></label>
           <button className="primary-button" disabled={busy}>{busy ? "Sending…" : "Email me a secure link"}<Send size={17} /></button>
+          <button type="button" className="request-access-button" onClick={() => setRequestingAccess(true)}>Not invited yet? Request access</button>
           {message && <div className="form-message"><ShieldCheck size={19} /><span>{message}</span></div>}
           <small className="safety-note"><CircleAlert size={15} /> This service is not monitored for emergencies.</small>
           <a className="privacy-link" href="/privacy">Privacy notice</a>
         </form>
       </div>
+      {requestingAccess && <Modal title="Request access" onClose={() => setRequestingAccess(false)}><AccessRequestForm initialEmail={email} onDone={() => setRequestingAccess(false)} /></Modal>}
     </div>
   );
+}
+
+type PublicEvent = { id: string; name: string; section: string | null; starts_at: string; ends_at: string };
+
+function AccessRequestForm({ initialEmail, onDone }: { initialEmail: string; onDone: () => void }) {
+  const [events, setEvents] = useState<PublicEvent[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [complete, setComplete] = useState("");
+  useEffect(() => { api<{ events: PublicEvent[] }>("/api/access-request-events").then((result) => setEvents(result.events)).catch(() => setEvents([])); }, []);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError("");
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    try { const result = await api<{ message: string }>("/api/access-requests", { method: "POST", body: JSON.stringify(values) }); setComplete(result.message); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not send your request."); }
+    finally { setBusy(false); }
+  }
+  if (complete) return <div className="access-request-complete"><ShieldCheck size={30} /><p>{complete}</p><button type="button" className="primary-button" onClick={onDone}>Done</button></div>;
+  if (events === null) return <p>Loading events…</p>;
+  if (!events.length) return <div className="access-request-complete"><CircleAlert size={30} /><p>No events are currently accepting online access requests. Please contact an event Leader.</p><button type="button" className="secondary-button" onClick={onDone}>Close</button></div>;
+  return <form className="modal-form" onSubmit={submit}>
+    <p className="form-help">Choose the event you need. An administrator will review the request before any access is granted.</p>
+    <label>Event<select name="eventId" required defaultValue=""><option value="" disabled>Choose an event</option>{events.map((item) => <option key={item.id} value={item.id}>{item.name}{item.section ? ` · ${item.section[0].toUpperCase()}${item.section.slice(1)}` : ""}</option>)}</select></label>
+    <label>Your name or nickname<input name="displayName" maxLength={120} autoComplete="name" required /></label>
+    <label>Email address<input name="email" type="email" maxLength={254} defaultValue={initialEmail} autoComplete="email" required /></label>
+    <label>Parent/carer of<input name="parentOf" maxLength={160} placeholder="Child’s first name(s)" /></label>
+    <label>Optional note<textarea name="note" rows={3} maxLength={800} placeholder="Anything that will help the Leaders identify you" /></label>
+    <label className="request-honeypot" aria-hidden="true">Website<input name="website" tabIndex={-1} autoComplete="off" /></label>
+    <p className="privacy-inline"><ShieldCheck size={18} /> Your details go only to authorised event administrators and are removed after 30 days.</p>
+    {error && <p className="error-text">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? "Sending…" : "Send access request"}</button>
+  </form>;
 }
 
 function HomeTab({ details, onRefresh }: { details: EventDetails; onRefresh: () => Promise<void> }) {

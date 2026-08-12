@@ -1,5 +1,7 @@
 # 4th Ashby CampComms
 
+Current release: **v1.2.0**. This release adds administrator-controlled public access requests, parent/Young Leader approval, request notifications, throttling and 30-day request retention.
+
 A private, event-scoped progressive web application for parents and leaders. It is designed for camps, day trips, sleepovers and other activities without exposing personal telephone numbers.
 
 ## Current milestone

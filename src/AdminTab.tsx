@@ -9,7 +9,8 @@ type AdminMember = {
   can_view_private: number; can_reply_private: number; can_post_announcements: number;
 };
 
-type AdminData = { event: EventDetails["event"]; members: AdminMember[]; operations: { emailPreferences: { daily: number; important_only: number; none: number }; pushDevices: number; recentDeliveries: { successful: number; failed: number; last_update: string | null } } };
+type AccessRequest = { id: string; email: string; display_name: string; parent_of: string; note: string; created_at: string };
+type AdminData = { event: EventDetails["event"]; members: AdminMember[]; acceptingAccessRequests: boolean; accessRequests: AccessRequest[]; operations: { emailPreferences: { daily: number; important_only: number; none: number }; pushDevices: number; recentDeliveries: { successful: number; failed: number; last_update: string | null } } };
 export function AdminTab({ details, onEventsChanged }: { details: EventDetails; onEventsChanged: (eventId?: string) => Promise<void> }) {
   const [data, setData] = useState<AdminData | null>(null);
   const [dialog, setDialog] = useState<"invite" | "bulk" | "edit" | "create" | null>(null);
@@ -46,6 +47,7 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
           {data.members.map((member) => <MemberRow key={member.id} eventId={details.event.id} member={member} onChanged={load} />)}
         </div>
       </section>
+      <AccessRequestsPanel eventId={details.event.id} accepting={data.acceptingAccessRequests} requests={data.accessRequests} onChanged={load} />
       <section className="admin-panel operations-panel">
         <header><div><p className="eyebrow">Pre-launch checks</p><h2>Notifications</h2></div><ShieldCheck size={22} /></header>
         <dl className="settings-list">
@@ -63,6 +65,32 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
     {dialog === "edit" && <AdminModal title="Edit event" onClose={() => setDialog(null)}><EventForm event={data.event} onDone={async () => { setDialog(null); setNotice("Event settings saved."); await onEventsChanged(details.event.id); await load(); }} /></AdminModal>}
     {dialog === "create" && <AdminModal title="Create an event" onClose={() => setDialog(null)}><EventForm onDone={async (id) => { setDialog(null); await onEventsChanged(id); }} /></AdminModal>}
   </>;
+}
+
+function AccessRequestsPanel({ eventId, accepting, requests, onChanged }: { eventId: string; accepting: boolean; requests: AccessRequest[]; onChanged: () => Promise<void> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  async function setAccepting(value: boolean) {
+    setBusy("setting");
+    try { await api(`/api/admin/events/${eventId}/access-request-settings`, { method: "PATCH", body: JSON.stringify({ accepting: value }) }); await onChanged(); }
+    finally { setBusy(null); }
+  }
+  async function decide(request: AccessRequest, action: "approve" | "decline", role?: "parent" | "young_leader") {
+    if (action === "decline" && !window.confirm(`Decline the access request from ${request.display_name}?`)) return;
+    setBusy(request.id);
+    try { await api(`/api/admin/events/${eventId}/access-requests/${request.id}/${action}`, { method: "POST", body: JSON.stringify(role ? { role } : {}) }); await onChanged(); }
+    finally { setBusy(null); }
+  }
+  return <section className="admin-panel access-requests-panel">
+    <header><div><p className="eyebrow">Join requests</p><h2>Access requests {requests.length ? `(${requests.length})` : ""}</h2></div><label className="access-toggle"><input type="checkbox" checked={accepting} disabled={busy === "setting"} onChange={(event) => void setAccepting(event.target.checked)} /> Accept requests</label></header>
+    <p className="operations-note">When enabled, this event appears on the public request form. Requests never grant access automatically.</p>
+    <div className="access-request-list">
+      {requests.map((request) => <article key={request.id}>
+        <div><strong>{request.display_name}</strong><span>{request.email}</span>{request.parent_of && <small>Parent/carer of {request.parent_of}</small>}<small>Requested {dateTime(request.created_at)}</small>{request.note && <p>{request.note}</p>}</div>
+        <div className="access-request-actions"><button className="primary-button compact" disabled={busy === request.id} onClick={() => void decide(request, "approve", "parent")}>Approve parent</button><button className="secondary-button" disabled={busy === request.id} onClick={() => void decide(request, "approve", "young_leader")}>Approve Young Leader</button><button className="text-button" disabled={busy === request.id} onClick={() => void decide(request, "decline")}>Decline</button></div>
+      </article>)}
+      {!requests.length && <p className="empty-inline">No pending access requests.</p>}
+    </div>
+  </section>;
 }
 
 function MemberRow({ eventId, member, onChanged }: { eventId: string; member: AdminMember; onChanged: () => Promise<void> }) {
