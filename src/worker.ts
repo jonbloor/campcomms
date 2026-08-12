@@ -477,7 +477,7 @@ app.get("/api/events/:eventId", async (c) => {
     ).bind(c.get("user").id, eventId).all(),
     c.env.DB.prepare(
       `SELECT t.*, u.display_name AS author_name, u.parent_of AS author_parent_of, em.role AS author_role,
-              (SELECT COUNT(*) FROM posts p WHERE p.topic_id = t.id AND p.deleted_at IS NULL) AS reply_count,
+              MAX(0, (SELECT COUNT(*) FROM posts p WHERE p.topic_id = t.id AND p.deleted_at IS NULL) - 1) AS reply_count,
               (SELECT MAX(p.created_at) FROM posts p WHERE p.topic_id = t.id AND p.deleted_at IS NULL) AS last_reply_at,
               EXISTS(SELECT 1 FROM posts p WHERE p.topic_id = t.id AND p.deleted_at IS NULL AND p.author_id != ?
                 AND p.created_at > COALESCE((SELECT cr.last_read_at FROM content_reads cr WHERE cr.user_id = ? AND cr.resource_type = 'topic' AND cr.resource_id = t.id), '1970-01-01')) AS unread
