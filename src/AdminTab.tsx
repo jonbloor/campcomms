@@ -1,5 +1,5 @@
 import { FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { Bell, CalendarPlus, Check, CircleAlert, Mail, Pencil, RefreshCw, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { Bell, CalendarPlus, Check, CircleAlert, Mail, Pencil, RefreshCw, Search, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { api, type EventDetails } from "./api";
 
 type AdminMember = {
@@ -15,6 +15,10 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
   const [data, setData] = useState<AdminData | null>(null);
   const [dialog, setDialog] = useState<"invite" | "bulk" | "edit" | "create" | null>(null);
   const [notice, setNotice] = useState("");
+  const [section, setSection] = useState<"overview" | "people" | "requests" | "invitations">("overview");
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [accessFilter, setAccessFilter] = useState("all");
 
   async function load() {
     setData(await api<AdminData>(`/api/admin/events/${details.event.id}`));
@@ -22,15 +26,32 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
   useEffect(() => { void load(); }, [details.event.id]);
 
   if (!data) return <div className="admin-loading"><RefreshCw className="spin" size={20} /> Loading administration…</div>;
+  const query = search.trim().toLowerCase();
+  const filteredMembers = data.members.filter((member) => {
+    const matchesText = !query || [member.display_name, member.email, member.parent_of].some((value) => value.toLowerCase().includes(query));
+    const matchesRole = roleFilter === "all" || member.role === roleFilter;
+    const pending = member.status === "invited" || member.invitation_status === "sent" || member.invitation_status === "delivered";
+    const failed = member.invitation_status === "failed" || member.last_email_status?.startsWith("failed");
+    const matchesAccess = accessFilter === "all" || (accessFilter === "active" && member.status === "active") || (accessFilter === "pending" && pending) || (accessFilter === "failed" && failed);
+    return matchesText && matchesRole && matchesAccess;
+  });
   return <>
     <section className="admin-hero">
       <div><p className="eyebrow">Event administration</p><h2>Manage {data.event.name}</h2><p>Invite families and leaders, control access, and reuse the hub for future activities.</p></div>
       <button className="primary-button" onClick={() => setDialog("create")}><CalendarPlus size={18} /> New event</button>
     </section>
     {notice && <div className="success-banner"><Check size={18} /> {notice}</div>}
+    {data.accessRequests.length > 0 && section !== "requests" && <button type="button" className="admin-request-alert" onClick={() => setSection("requests")}><Bell size={19} /><span><strong>{data.accessRequests.length} access request{data.accessRequests.length === 1 ? "" : "s"} waiting</strong><small>Review and approve or decline</small></span><span>Review</span></button>}
+
+    <nav className="admin-sections" aria-label="Manage event">
+      <button type="button" className={section === "overview" ? "active" : ""} onClick={() => setSection("overview")}>Overview</button>
+      <button type="button" className={section === "people" ? "active" : ""} onClick={() => setSection("people")}>People <span>{data.members.length}</span></button>
+      <button type="button" className={section === "requests" ? "active" : ""} onClick={() => setSection("requests")}>Access requests {data.accessRequests.length > 0 && <span className="attention">{data.accessRequests.length}</span>}</button>
+      <button type="button" className={section === "invitations" ? "active" : ""} onClick={() => setSection("invitations")}>Invitations</button>
+    </nav>
 
     <div className="admin-grid">
-      <section className="admin-panel">
+      {section === "overview" && <><section className="admin-panel">
         <header><div><p className="eyebrow">Lifecycle</p><h2>Event settings</h2></div><button className="secondary-button" onClick={() => setDialog("edit")}><Pencil size={16} /> Edit</button></header>
         <dl className="settings-list">
           <div><dt>Status</dt><dd><span className={`status-badge ${data.event.status}`}>{data.event.status.replace("_", " ")}</span></dd></div>
@@ -41,13 +62,6 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
         </dl>
       </section>
 
-      <section className="admin-panel people-panel">
-        <header><div><p className="eyebrow">Access list</p><h2>{data.members.length} people</h2></div><div className="button-row"><button className="secondary-button" onClick={() => setDialog("bulk")}><Users size={16} /> Bulk invite</button><button className="primary-button compact" onClick={() => setDialog("invite")}><UserPlus size={17} /> Invite</button></div></header>
-        <div className="people-list">
-          {data.members.map((member) => <MemberRow key={member.id} eventId={details.event.id} member={member} onChanged={load} />)}
-        </div>
-      </section>
-      <AccessRequestsPanel eventId={details.event.id} accepting={data.acceptingAccessRequests} requests={data.accessRequests} onChanged={load} />
       <section className="admin-panel operations-panel">
         <header><div><p className="eyebrow">Pre-launch checks</p><h2>Notifications</h2></div><ShieldCheck size={22} /></header>
         <dl className="settings-list">
@@ -57,7 +71,14 @@ export function AdminTab({ details, onEventsChanged }: { details: EventDetails; 
           <div><dt><CircleAlert size={15} /> Delivery issues</dt><dd className={Number(data.operations.recentDeliveries.failed || 0) ? "delivery-warning" : ""}>{Number(data.operations.recentDeliveries.failed || 0)} failed, bounced or complained</dd></div>
         </dl>
         <p className="operations-note">Parents control their own email choice. This panel reports delivery health without revealing message contents.</p>
-      </section>
+      </section></>}
+      {section === "people" && <section className="admin-panel people-panel manage-full-panel">
+        <header><div><p className="eyebrow">Access list</p><h2>{filteredMembers.length === data.members.length ? `${data.members.length} people` : `${filteredMembers.length} of ${data.members.length} people`}</h2></div><button className="primary-button compact" onClick={() => setDialog("invite")}><UserPlus size={17} /> Invite</button></header>
+        <div className="people-toolbar"><label className="people-search"><Search size={17} /><span className="sr-only">Search people</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, email or Parent/carer of" /></label><select aria-label="Filter by role" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}><option value="all">All roles</option><option value="parent">Parents</option><option value="young_leader">Young Leaders</option><option value="leader">Leaders</option><option value="safeguarding">Safeguarding</option><option value="event_admin">Administrators</option></select><select aria-label="Filter by access status" value={accessFilter} onChange={(event) => setAccessFilter(event.target.value)}><option value="all">All access</option><option value="active">Active</option><option value="pending">Invitation pending</option><option value="failed">Invitation/email issue</option></select></div>
+        <div className="people-list">{filteredMembers.map((member) => <MemberRow key={member.id} eventId={details.event.id} member={member} onChanged={load} />)}{!filteredMembers.length && <p className="empty-inline">No people match those filters.</p>}</div>
+      </section>}
+      {section === "requests" && <AccessRequestsPanel eventId={details.event.id} accepting={data.acceptingAccessRequests} requests={data.accessRequests} onChanged={load} />}
+      {section === "invitations" && <section className="admin-panel invitations-panel manage-full-panel"><header><div><p className="eyebrow">Add people</p><h2>Invitations</h2></div><Mail size={22} /></header><p>Invite one person with their role, or paste a list of parents. Every person receives a private, one-use link that expires after 48 hours.</p><div className="invitation-choices"><button className="primary-button" onClick={() => setDialog("invite")}><UserPlus size={18} /> Invite one person</button><button className="secondary-button" onClick={() => setDialog("bulk")}><Users size={18} /> Bulk invite parents</button></div></section>}
     </div>
 
     {dialog === "invite" && <AdminModal title="Invite someone" onClose={() => setDialog(null)}><InviteForm eventId={details.event.id} onDone={async () => { setDialog(null); setNotice("Invitation sent."); await load(); }} /></AdminModal>}

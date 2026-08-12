@@ -1,6 +1,6 @@
 # 4th Ashby CampComms
 
-Current release: **v1.2.2**. This polishing release removes a stray announcement flag from the interface and counts discussion replies separately from the opening message. v1.2.1 added reliable, unique announcement view tracking.
+Current release: **v1.3.0**. This release introduces streamlined mobile navigation, a sectioned administration area, searchable and filterable people management, and persistent in-app access-request notifications.
 
 A private, event-scoped progressive web application for parents and leaders. It is designed for camps, day trips, sleepovers and other activities without exposing personal telephone numbers.
 

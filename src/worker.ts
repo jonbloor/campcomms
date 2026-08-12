@@ -464,9 +464,9 @@ app.get("/api/events", async (c) => {
 app.get("/api/events/:eventId", async (c) => {
   const membership = await requireMembership(c, c.req.param("eventId"));
   if (membership instanceof Response) return membership;
-  await ensureAnnouncementViewSchema(c.env.DB);
+  await Promise.all([ensureAnnouncementViewSchema(c.env.DB), ensureAccessRequestSchema(c.env.DB)]);
   const eventId = membership.event_id;
-  const [event, announcements, topics, lifts, albums, privateUnread] = await Promise.all([
+  const [event, announcements, topics, lifts, albums, privateUnread, pendingAccessRequests] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM events WHERE id = ?").bind(eventId).first(),
     c.env.DB.prepare(
       `SELECT a.*, u.display_name AS author_name, u.parent_of AS author_parent_of, em.role AS author_role,
@@ -503,6 +503,9 @@ app.get("/api/events/:eventId", async (c) => {
          AND EXISTS(SELECT 1 FROM private_messages pm WHERE pm.thread_id = pt.id AND pm.author_id != ?
            AND pm.created_at > COALESCE((SELECT cr.last_read_at FROM content_reads cr WHERE cr.user_id = ? AND cr.resource_type = 'private_thread' AND cr.resource_id = pt.id), '1970-01-01'))`,
     ).bind(eventId, membership.role === "young_leader" ? 1 : 0, hasCapability(membership, "can_view_private") ? 1 : 0, c.get("user").id, c.get("user").id, c.get("user").id).first<{ count: number }>(),
+    membership.role === "event_admin"
+      ? c.env.DB.prepare("SELECT COUNT(*) AS count FROM access_requests WHERE event_id = ? AND status = 'pending'").bind(eventId).first<{ count: number }>()
+      : Promise.resolve({ count: 0 }),
   ]);
   const topicRows = topics.results as Array<{ unread: number; kind: "discussion" | "lost" | "found" }>;
   const liftRows = lifts.results as Array<{ unread: number }>;
@@ -513,6 +516,7 @@ app.get("/api/events/:eventId", async (c) => {
       lost_found: topicRows.filter((topic) => topic.kind !== "discussion").reduce((count, topic) => count + Number(Boolean(topic.unread)), 0),
       lifts: liftRows.reduce((count, lift) => count + Number(Boolean(lift.unread)), 0),
       private_messages: privateUnread?.count ?? 0,
+      access_requests: pendingAccessRequests?.count ?? 0,
     },
   });
 });

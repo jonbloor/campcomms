@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowLeft, Bell, Bus, CalendarDays, Camera, Check, CircleAlert, Compass, Eye,
   ClipboardCheck, Home, Info, LockKeyhole, LogOut, MessageCircle, Pencil, Plus, Send, ShieldCheck,
-  PackageSearch, Settings, TentTree, Trash2, Unlock, Users, X, Mail,
+  PackageSearch, Settings, TentTree, Trash2, Unlock, Users, X, Mail, MoreHorizontal,
 } from "lucide-react";
 import { api, ApiError, type EventDetails, type EventSummary } from "./api";
 import { AdminTab, EventForm } from "./AdminTab";
@@ -30,6 +30,7 @@ function CampCommsApp() {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   async function loadSession(preferredId?: string) {
     setLoading(true); setAuthError("");
@@ -78,6 +79,9 @@ function CampCommsApp() {
   if (!details) return <EmptyState me={me} onLogout={() => logout(setMe)} onCreated={loadSession} />;
   const youngLeader = details.membership.role === "young_leader";
   const activeTab = youngLeader && (tab === "lifts" || tab === "private") ? "home" : tab;
+  const moreTabs: Tab[] = ["lost-found", "lifts", "info", "admin"];
+  const moreBadge = details.unread_counts.lost_found + (youngLeader ? 0 : details.unread_counts.lifts) + (details.membership.role === "event_admin" ? details.unread_counts.access_requests : 0);
+  const navigate = (next: Tab) => { setTab(next); setMoreOpen(false); };
 
   return (
     <div className="app-shell">
@@ -114,7 +118,7 @@ function CampCommsApp() {
           </div>
         </header>
 
-        <nav className="tabs" aria-label="Event sections">
+        <nav className="tabs desktop-tabs" aria-label="Event sections">
           <TabButton id="home" current={activeTab} onClick={setTab} icon={Home} label="Home" />
           <TabButton id="discuss" current={activeTab} onClick={setTab} icon={MessageCircle} label="Discuss" badge={details.unread_counts.discussions} />
           <TabButton id="lost-found" current={activeTab} onClick={setTab} icon={PackageSearch} label="Lost & found" badge={details.unread_counts.lost_found} />
@@ -122,8 +126,23 @@ function CampCommsApp() {
           <TabButton id="photos" current={activeTab} onClick={setTab} icon={Camera} label="Photos" />
           {!youngLeader && <TabButton id="private" current={activeTab} onClick={setTab} icon={LockKeyhole} label="Private" badge={details.unread_counts.private_messages} />}
           <TabButton id="info" current={activeTab} onClick={setTab} icon={Info} label="Information" />
-          {details.membership.role === "event_admin" && <TabButton id="admin" current={activeTab} onClick={setTab} icon={Settings} label="Manage" />}
+          {details.membership.role === "event_admin" && <TabButton id="admin" current={activeTab} onClick={setTab} icon={Settings} label="Manage" badge={details.unread_counts.access_requests} />}
         </nav>
+
+        <nav className="mobile-tabs" aria-label="Event sections">
+          <TabButton id="home" current={activeTab} onClick={navigate} icon={Home} label="Home" />
+          <TabButton id="discuss" current={activeTab} onClick={navigate} icon={MessageCircle} label="Discuss" badge={details.unread_counts.discussions} />
+          <TabButton id="photos" current={activeTab} onClick={navigate} icon={Camera} label="Photos" />
+          {!youngLeader && <TabButton id="private" current={activeTab} onClick={navigate} icon={LockKeyhole} label="Private" badge={details.unread_counts.private_messages} />}
+          <button type="button" aria-expanded={moreOpen} aria-current={moreTabs.includes(activeTab) ? "page" : undefined} className={moreTabs.includes(activeTab) ? "active" : ""} onClick={() => setMoreOpen((open) => !open)}><MoreHorizontal size={19} /><span>More</span>{moreBadge > 0 && <span className="tab-badge" aria-label={`${moreBadge} items need attention`}>{moreBadge > 99 ? "99+" : moreBadge}</span>}</button>
+        </nav>
+        {moreOpen && <><button type="button" className="more-menu-backdrop" aria-label="Close more menu" onClick={() => setMoreOpen(false)} /><section className="more-menu" aria-label="More event sections">
+          <header><strong>More</strong><button type="button" className="icon-button" aria-label="Close" onClick={() => setMoreOpen(false)}><X size={19} /></button></header>
+          <button type="button" onClick={() => navigate("lost-found")}><PackageSearch size={20} /><span><strong>Lost &amp; Found</strong><small>Items lost or found after the event</small></span>{details.unread_counts.lost_found > 0 && <span className="tab-badge">{details.unread_counts.lost_found}</span>}</button>
+          {!youngLeader && <button type="button" onClick={() => navigate("lifts")}><Bus size={20} /><span><strong>Lift sharing</strong><small>Offers and requests from families</small></span>{details.unread_counts.lifts > 0 && <span className="tab-badge">{details.unread_counts.lifts}</span>}</button>}
+          <button type="button" onClick={() => navigate("info")}><Info size={20} /><span><strong>Information</strong><small>Profile, notifications and event details</small></span></button>
+          {details.membership.role === "event_admin" && <button type="button" onClick={() => navigate("admin")}><Settings size={20} /><span><strong>Manage</strong><small>People, requests and event settings</small></span>{details.unread_counts.access_requests > 0 && <span className="tab-badge">{details.unread_counts.access_requests}</span>}</button>}
+        </section></>}
 
         <div className="content">
           {activeTab === "home" && <HomeTab details={details} onRefresh={refreshEvent} />}
