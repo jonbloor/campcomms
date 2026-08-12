@@ -464,13 +464,15 @@ app.get("/api/events", async (c) => {
 app.get("/api/events/:eventId", async (c) => {
   const membership = await requireMembership(c, c.req.param("eventId"));
   if (membership instanceof Response) return membership;
+  await ensureAnnouncementViewSchema(c.env.DB);
   const eventId = membership.event_id;
   const [event, announcements, topics, lifts, albums, privateUnread] = await Promise.all([
     c.env.DB.prepare("SELECT * FROM events WHERE id = ?").bind(eventId).first(),
     c.env.DB.prepare(
       `SELECT a.*, u.display_name AS author_name, u.parent_of AS author_parent_of, em.role AS author_role,
               EXISTS(SELECT 1 FROM announcement_acknowledgements aa WHERE aa.announcement_id = a.id AND aa.user_id = ?) AS acknowledged,
-              (SELECT COUNT(*) FROM announcement_acknowledgements aa WHERE aa.announcement_id = a.id) AS acknowledgement_count
+              (SELECT COUNT(*) FROM announcement_acknowledgements aa WHERE aa.announcement_id = a.id) AS acknowledgement_count,
+              (SELECT COUNT(*) FROM announcement_views av WHERE av.announcement_id = a.id) AS view_count
        FROM announcements a JOIN users u ON u.id = a.author_id JOIN event_memberships em ON em.event_id = a.event_id AND em.user_id = a.author_id WHERE a.event_id = ? ORDER BY a.published_at DESC`,
     ).bind(c.get("user").id, eventId).all(),
     c.env.DB.prepare(
@@ -804,6 +806,19 @@ app.post("/api/events/:eventId/announcements/:announcementId/acknowledge", async
   )
     .bind(c.get("user").id, announcementId, membership.event_id)
     .run();
+  return c.json({ ok: true });
+});
+
+app.post("/api/events/:eventId/announcements/:announcementId/view", async (c) => {
+  const membership = await requireMembership(c, c.req.param("eventId"));
+  if (membership instanceof Response) return membership;
+  await ensureAnnouncementViewSchema(c.env.DB);
+  const result = await c.env.DB.prepare(
+    `INSERT INTO announcement_views (announcement_id, user_id)
+     SELECT id, ? FROM announcements WHERE id = ? AND event_id = ?
+     ON CONFLICT(announcement_id, user_id) DO UPDATE SET last_viewed_at = CURRENT_TIMESTAMP`,
+  ).bind(c.get("user").id, c.req.param("announcementId"), membership.event_id).run();
+  if (!result.meta.changes) return c.json({ error: "Announcement not found." }, 404);
   return c.json({ ok: true });
 });
 
@@ -1852,6 +1867,19 @@ async function ensureAccessRequestSchema(db: D1Database) {
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_access_requests_pending ON access_requests(event_id, email) WHERE status = 'pending'"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_access_requests_event ON access_requests(event_id, status, created_at DESC)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_access_requests_ip ON access_requests(requested_ip_hash, created_at DESC)"),
+  ]);
+}
+
+async function ensureAnnouncementViewSchema(db: D1Database) {
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS announcement_views (
+      announcement_id TEXT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      first_viewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_viewed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (announcement_id, user_id)
+    )`),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_announcement_views_announcement ON announcement_views(announcement_id, first_viewed_at)"),
   ]);
 }
 

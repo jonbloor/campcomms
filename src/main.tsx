@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  ArrowLeft, Bell, Bus, CalendarDays, Camera, Check, CircleAlert, Compass,
+  ArrowLeft, Bell, Bus, CalendarDays, Camera, Check, CircleAlert, Compass, Eye,
   ClipboardCheck, Home, Info, LockKeyhole, LogOut, MessageCircle, Pencil, Plus, Send, ShieldCheck,
   PackageSearch, Settings, TentTree, Trash2, Unlock, Users, X, Mail,
 } from "lucide-react";
@@ -219,6 +219,21 @@ function HomeTab({ details, onRefresh }: { details: EventDetails; onRefresh: () 
     if (!id) return;
     window.setTimeout(() => document.getElementById(`announcement-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
   }, []);
+  useEffect(() => {
+    const viewed = new Set<string>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.35) continue;
+        const announcementId = (entry.target as HTMLElement).dataset.announcementId;
+        if (!announcementId || viewed.has(announcementId) || document.visibilityState !== "visible") continue;
+        viewed.add(announcementId);
+        observer.unobserve(entry.target);
+        void api(`/api/events/${details.event.id}/announcements/${announcementId}/view`, { method: "POST" });
+      }
+    }, { threshold: [0.35] });
+    document.querySelectorAll<HTMLElement>("[data-announcement-id]").forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [details.event.id, details.announcements]);
   return <>
     <section className="event-hero">
       <div><span className="pill"><Compass size={14} /> Summer camp</span><h2>{details.event.summary}</h2><p><CalendarDays size={17} /> {formatRange(details.event.starts_at, details.event.ends_at)} · {details.event.location}</p></div>
@@ -226,10 +241,10 @@ function HomeTab({ details, onRefresh }: { details: EventDetails; onRefresh: () 
     </section>
     <div className="section-heading"><div><p className="eyebrow">Latest from the leaders</p><h2>Announcements</h2></div>{canPost && <button className="primary-button compact" onClick={() => setEditing("new")}><Plus size={18} /> New announcement</button>}</div>
     <div className="card-list">
-      {details.announcements.map((item) => <article id={`announcement-${item.id}`} className={`announcement-card ${item.importance}`} key={item.id}>
+      {details.announcements.map((item) => <article id={`announcement-${item.id}`} data-announcement-id={item.id} className={`announcement-card ${item.importance}`} key={item.id}>
         <div className="card-icon">{item.importance === "important" ? <CircleAlert size={21} /> : <Bell size={21} />}</div>
         <div className="card-main"><div className="card-meta"><LeaderName name={item.author_name} parentOf={item.author_parent_of} role={item.author_role} compact /><time>{relativeDate(item.published_at)}</time></div><h3>{item.title}</h3><p className="message-body">{item.body}</p>
-          <div className="announcement-actions">{item.acknowledgement_required ? item.acknowledged ? <span className="acknowledged"><Check size={16} /> Acknowledged</span> : <button className="secondary-button" onClick={async () => { await api(`/api/events/${details.event.id}/announcements/${item.id}/acknowledge`, { method: "POST" }); await onRefresh(); }}><Check size={16} /> Acknowledge</button> : null}
+          <div className="announcement-actions">{canPost && <span className="announcement-views" title="Unique signed-in people who have seen this announcement"><Eye size={15} /> {Number(item.view_count)} viewed</span>}{item.acknowledgement_required ? item.acknowledged ? <span className="acknowledged"><Check size={16} /> Acknowledged</span> : <button className="secondary-button" onClick={async () => { await api(`/api/events/${details.event.id}/announcements/${item.id}/acknowledge`, { method: "POST" }); await onRefresh(); }}><Check size={16} /> Acknowledge</button> : null}
           {canPost && <><button className="text-button neutral" onClick={() => setEditing(item)}><Pencil size={15} /> Edit</button>{item.acknowledgement_required && <button className="text-button neutral" onClick={() => setReport(item)}><ClipboardCheck size={15} /> Responses</button>}<button className="text-button" onClick={async () => { if (confirm(`Delete “${item.title}”? This cannot be undone.`)) { await api(`/api/events/${details.event.id}/announcements/${item.id}`, { method: "DELETE" }); await onRefresh(); } }}><Trash2 size={15} /> Delete</button></>}</div>
         </div>
       </article>)}
