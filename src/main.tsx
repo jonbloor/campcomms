@@ -10,10 +10,11 @@ import { AdminTab, EventForm } from "./AdminTab";
 import { PhotosTab } from "./PhotosTab";
 import { PrivacyNotice } from "./PrivacyNotice";
 import { FeaturesPage } from "./FeaturesPage";
+import { PlannerTab } from "./PlannerTab";
 import "./styles.css";
 
 type Me = { user: { id: string; email: string; displayName: string; parentOf: string; emailNotificationPreference: "daily" | "important_only" | "none"; isSystemAdmin: boolean }; children: Array<{ id: string; display_name: string }> };
-type Tab = "home" | "discuss" | "lost-found" | "lifts" | "photos" | "private" | "info" | "admin";
+type Tab = "home" | "discuss" | "lost-found" | "lifts" | "photos" | "private" | "planner" | "info" | "admin";
 
 function App() {
   return window.location.pathname === "/privacy" ? <PrivacyNotice /> : window.location.pathname === "/features" ? <FeaturesPage /> : <CampCommsApp />;
@@ -26,7 +27,7 @@ function CampCommsApp() {
   const [details, setDetails] = useState<EventDetails | null>(null);
   const [tab, setTab] = useState<Tab>(() => {
     const requested = new URL(window.location.href).searchParams.get("tab") as Tab | null;
-    return requested && ["home", "discuss", "lost-found", "lifts", "photos", "private", "info", "admin"].includes(requested) ? requested : "home";
+    return requested && ["home", "discuss", "lost-found", "lifts", "photos", "private", "planner", "info", "admin"].includes(requested) ? requested : "home";
   });
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState("");
@@ -80,7 +81,7 @@ function CampCommsApp() {
   if (!details) return <EmptyState me={me} onLogout={() => logout(setMe)} onCreated={loadSession} />;
   const youngLeader = details.membership.role === "young_leader";
   const activeTab = youngLeader && (tab === "lifts" || tab === "private") ? "home" : tab;
-  const moreTabs: Tab[] = ["lost-found", "lifts", "info", "admin"];
+  const moreTabs: Tab[] = ["lost-found", "lifts", "planner", "info", "admin"];
   const moreBadge = details.unread_counts.lost_found + (youngLeader ? 0 : details.unread_counts.lifts) + (details.membership.role === "event_admin" ? details.unread_counts.access_requests : 0);
   const navigate = (next: Tab) => { setTab(next); setMoreOpen(false); };
 
@@ -126,6 +127,7 @@ function CampCommsApp() {
           {!youngLeader && <TabButton id="lifts" current={activeTab} onClick={setTab} icon={Bus} label="Lifts" badge={details.unread_counts.lifts} />}
           <TabButton id="photos" current={activeTab} onClick={setTab} icon={Camera} label="Photos" />
           {!youngLeader && <TabButton id="private" current={activeTab} onClick={setTab} icon={LockKeyhole} label="Private" badge={details.unread_counts.private_messages} />}
+          {isLeaderRole(details.membership.role) && <TabButton id="planner" current={activeTab} onClick={setTab} icon={ClipboardCheck} label="Planner" />}
           <TabButton id="info" current={activeTab} onClick={setTab} icon={Info} label="Information" />
           {details.membership.role === "event_admin" && <TabButton id="admin" current={activeTab} onClick={setTab} icon={Settings} label="Manage" badge={details.unread_counts.access_requests} />}
         </nav>
@@ -141,6 +143,7 @@ function CampCommsApp() {
           <header><strong>More</strong><button type="button" className="icon-button" aria-label="Close" onClick={() => setMoreOpen(false)}><X size={19} /></button></header>
           <button type="button" onClick={() => navigate("lost-found")}><PackageSearch size={20} /><span><strong>Lost &amp; Found</strong><small>Items lost or found after the event</small></span>{details.unread_counts.lost_found > 0 && <span className="tab-badge">{details.unread_counts.lost_found}</span>}</button>
           {!youngLeader && <button type="button" onClick={() => navigate("lifts")}><Bus size={20} /><span><strong>Lift sharing</strong><small>Offers and requests from families</small></span>{details.unread_counts.lifts > 0 && <span className="tab-badge">{details.unread_counts.lifts}</span>}</button>}
+          {isLeaderRole(details.membership.role) && <button type="button" onClick={() => navigate("planner")}><ClipboardCheck size={20} /><span><strong>Camp planner</strong><small>Programme, groups and leader assignments</small></span></button>}
           <button type="button" onClick={() => navigate("info")}><Info size={20} /><span><strong>Information</strong><small>Profile, notifications and event details</small></span></button>
           {details.membership.role === "event_admin" && <button type="button" onClick={() => navigate("admin")}><Settings size={20} /><span><strong>Manage</strong><small>People, requests and event settings</small></span>{details.unread_counts.access_requests > 0 && <span className="tab-badge">{details.unread_counts.access_requests}</span>}</button>}
         </section></>}
@@ -152,6 +155,7 @@ function CampCommsApp() {
           {activeTab === "lifts" && <LiftsTab details={details} me={me} onRefresh={refreshEvent} />}
           {activeTab === "photos" && <PhotosTab details={details} onRefresh={refreshEvent} />}
           {activeTab === "private" && <PrivateTab eventId={details.event.id} membership={details.membership} me={me} onRefresh={refreshEvent} />}
+          {activeTab === "planner" && isLeaderRole(details.membership.role) && <PlannerTab eventId={details.event.id} eventName={details.event.name} start={details.event.starts_at} end={details.event.ends_at} />}
           {activeTab === "info" && <InfoTab details={details} me={me} onProfileChanged={() => loadSession(selectedId ?? undefined)} />}
           {activeTab === "admin" && details.membership.role === "event_admin" && <AdminTab details={details} onEventsChanged={loadSession} />}
         </div>
