@@ -531,6 +531,41 @@ app.get("/api/events/:eventId", async (c) => {
   });
 });
 
+app.get("/api/events/:eventId/planner", async (c) => {
+  const membership = await requireMembership(c, c.req.param("eventId"), ["leader", "event_admin", "safeguarding"]);
+  if (membership instanceof Response) return membership;
+  await ensurePlannerTable(c.env.DB);
+  const stored = await c.env.DB.prepare(
+    "SELECT document_json, revision, updated_at FROM event_planners WHERE event_id = ?",
+  ).bind(membership.event_id).first<{ document_json: string; revision: number; updated_at: string }>();
+  if (!stored) return c.json({ plan: null, revision: 0, updatedAt: null });
+  try {
+    return c.json({ plan: JSON.parse(stored.document_json), revision: stored.revision, updatedAt: stored.updated_at });
+  } catch {
+    console.error(JSON.stringify({ level: "error", message: "Stored planner JSON is invalid", eventId: membership.event_id }));
+    return c.json({ error: "The saved planner could not be opened." }, 500);
+  }
+});
+
+app.patch("/api/events/:eventId/planner", async (c) => {
+  const membership = await requireMembership(c, c.req.param("eventId"), ["leader", "event_admin", "safeguarding"]);
+  if (membership instanceof Response) return membership;
+  await ensurePlannerTable(c.env.DB);
+  const body = await safeJson<{ plan?: unknown }>(c.req.raw);
+  if (!isPlannerDocument(body.plan)) return c.json({ error: "The planner data is incomplete or invalid." }, 400);
+  const documentJson = JSON.stringify(body.plan);
+  if (documentJson.length > 500_000) return c.json({ error: "The planner is too large to save." }, 413);
+  const saved = await c.env.DB.prepare(
+    `INSERT INTO event_planners (event_id, document_json, revision, updated_by, updated_at)
+     VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(event_id) DO UPDATE SET document_json = excluded.document_json,
+       revision = event_planners.revision + 1, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP
+     RETURNING revision, updated_at`,
+  ).bind(membership.event_id, documentJson, c.get("user").id).first<{ revision: number; updated_at: string }>();
+  await audit(c.env.DB, c.get("user").id, membership.event_id, "planner.updated", "event_planner", membership.event_id);
+  return c.json({ ok: true, revision: saved?.revision ?? 1, updatedAt: saved?.updated_at ?? new Date().toISOString() });
+});
+
 app.post("/api/events/:eventId/albums", async (c) => {
   const membership = await requireMembership(c, c.req.param("eventId"), ["young_leader", "leader", "event_admin", "safeguarding"]);
   if (membership instanceof Response) return membership;
@@ -1737,6 +1772,25 @@ async function sha256(value: string) {
 
 async function safeJson<T>(request: Request): Promise<T> {
   try { return (await request.json()) as T; } catch { return {} as T; }
+}
+
+export function isPlannerDocument(value: unknown): value is { leaders: unknown[]; groups: unknown[]; items: unknown[] } {
+  if (!value || typeof value !== "object") return false;
+  const document = value as Record<string, unknown>;
+  return Array.isArray(document.leaders) && document.leaders.length <= 100
+    && Array.isArray(document.groups) && document.groups.length <= 100
+    && Array.isArray(document.items) && document.items.length <= 1_000;
+}
+
+async function ensurePlannerTable(db: D1Database) {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS event_planners (
+    event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    document_json TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    updated_by TEXT NOT NULL REFERENCES users(id),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_event_planners_updated_at ON event_planners(updated_at)").run();
 }
 
 export function normaliseEmail(value: unknown) {
