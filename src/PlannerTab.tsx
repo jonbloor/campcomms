@@ -52,7 +52,7 @@ function PrintProgramme({plan,days,eventName}:{plan:Plan;days:string[];eventName
   const [mode,setMode]=useState<"scouts"|"organiser"|"leader">("scouts"),[leader,setLeader]=useState(plan.leaders[0]?.id||"");
   const relevant=plan.items.filter(item=>mode!=="leader"||item.leaderIds.includes(leader)||(item.tasks??[]).some(task=>task.leaderIds.includes(leader))||item.kind!=="activity");
   const firstSlot=Math.max(0,Math.floor(Math.min(8*60,...relevant.map(item=>minutes(item.start)))/15)*15);
-  const lastSlot=Math.min(24*60,Math.ceil(Math.max(21*60,...relevant.map(item=>minutes(item.end))/15)*15));
+  const lastSlot=Math.min(24*60,Math.ceil(Math.max(21*60,...relevant.map(item=>minutes(item.end)))/15)*15);
   const slots=Array.from({length:Math.max(0,(lastSlot-firstSlot)/15)},(_,index)=>firstSlot+index*15);
   const slotLabel=(slot:number)=>`${String(Math.floor(slot/60)).padStart(2,"0")}:${String(slot%60).padStart(2,"0")}`;
   return <><section className="planner-card planner-print-controls"><div><h3>Print programme</h3><p>A4 landscape timetable with times down the left and camp days across the top.</p></div><div className="planner-kinds"><button className={mode==="scouts"?"active":""} onClick={()=>setMode("scouts")}>Scouts</button><button className={mode==="organiser"?"active":""} onClick={()=>setMode("organiser")}>Organiser</button><button className={mode==="leader"?"active":""} onClick={()=>setMode("leader")}>Leader</button></div>{mode==="leader"&&<select value={leader} onChange={e=>setLeader(e.target.value)}>{plan.leaders.map(x=><option value={x.id} key={x.id}>{x.name}</option>)}</select>}<button className="primary-button" onClick={()=>window.print()}><Printer size={17}/>Print</button></section>
