@@ -65,7 +65,7 @@ app.post("/api/auth/request-link", async (c) => {
   const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
   const ipHash = await sha256(c.req.header("CF-Connecting-IP") ?? "unknown");
   await c.env.DB.prepare(
-    "INSERT INTO magic_links (id, user_id, token_hash, redirect_path, expires_at, requested_ip_hash) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT OR IGNORE INTO magic_links (id, user_id, token_hash, redirect_path, expires_at, requested_ip_hash) VALUES (?, ?, ?, ?, ?, ?)",
   )
     .bind(id, user.id, tokenHash, redirectPath, expiresAt, ipHash)
     .run();
@@ -76,8 +76,13 @@ app.post("/api/auth/request-link", async (c) => {
     subject: "Your secure sign-in link",
     purpose: "magic_link",
     html: magicLinkEmail(user.display_name, url),
+    idempotencyKey: `magic-link/${id}`,
   });
-  await recordEmail(c.env.DB, user.id, "magic_link", delivery);
+  try {
+    await recordEmail(c.env.DB, user.id, "magic_link", delivery);
+  } catch (error) {
+    console.error(JSON.stringify({ level: "error", message: "Magic-link delivery logging failed", userId: user.id, error: String(error) }));
+  }
 
   if (!delivery.ok && String(c.env.ENVIRONMENT) !== "development") {
     console.error(JSON.stringify({ level: "error", message: "Magic-link email failed", userId: user.id }));
@@ -1562,15 +1567,25 @@ async function sendPushToUsers(env: Env, userIds: string[], payload: PushPayload
   return sent;
 }
 
-async function sendEmail(env: Env, input: { to: string; subject: string; html: string; purpose: string }) {
+async function sendEmail(env: Env, input: { to: string; subject: string; html: string; purpose: string; idempotencyKey?: string }) {
   if (!env.RESEND_API_KEY) return { ok: false, id: null, error: "not_configured" };
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: env.EMAIL_FROM, to: [input.to], subject: input.subject, html: input.html }),
-  });
-  const result = await response.json<{ id?: string; message?: string }>();
-  return response.ok ? { ok: true, id: result.id ?? null, error: null } : { ok: false, id: null, error: result.message ?? "send_failed" };
+  const headers: Record<string, string> = { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" };
+  if (input.idempotencyKey) headers["Idempotency-Key"] = input.idempotencyKey;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST", headers,
+        body: JSON.stringify({ from: env.EMAIL_FROM, to: [input.to], subject: input.subject, html: input.html }),
+      });
+      let result: { id?: string; message?: string } = {};
+      try { result = await response.json<typeof result>(); } catch { result = {}; }
+      if (response.ok) return { ok: true, id: result.id ?? null, error: null };
+      if (response.status < 500 || attempt === 2) return { ok: false, id: null, error: result.message ?? `send_failed_${response.status}` };
+    } catch (error) {
+      if (attempt === 2) return { ok: false, id: null, error: `network_error:${String(error)}` };
+    }
+  }
+  return { ok: false, id: null, error: "send_failed" };
 }
 
 async function recordEmail(db: D1Database, userId: string, purpose: string, delivery: { ok: boolean; id: string | null; error: string | null }, eventId: string | null = null) {

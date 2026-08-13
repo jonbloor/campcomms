@@ -1,6 +1,6 @@
 # 4th Ashby CampComms
 
-Current release: **v1.3.0**. This release introduces streamlined mobile navigation, a sectioned administration area, searchable and filterable people management, and persistent in-app access-request notifications.
+Current release: **v1.3.1**. This reliability release hardens secure sign-in email requests against transient Resend and delivery-logging failures. v1.3.0 introduced streamlined navigation and administration.
 
 A private, event-scoped progressive web application for parents and leaders. It is designed for camps, day trips, sleepovers and other activities without exposing personal telephone numbers.
 
