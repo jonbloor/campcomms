@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { canAccessLeaderDiscussions, canManageTopicLock, canUsePrivateMessagesAndLifts, canWriteEventFeature, cleanText, magicLinkConfirmationPage, normaliseEmail, photoGuestConfirmationPage, purgeMediaRecords, randomToken, safePushEndpoint, safeRedirect, slugify, validDay, validResendWebhook } from "./worker";
+import { canAccessLeaderDiscussions, canManageTopicLock, canUsePrivateMessagesAndLifts, canWriteEventFeature, cleanText, isPlannerDocument, magicLinkConfirmationPage, normaliseEmail, photoGuestConfirmationPage, purgeMediaRecords, randomToken, safePushEndpoint, safeRedirect, slugify, validDay, validResendWebhook } from "./worker";
 
 describe("security helpers", () => {
+  it("accepts bounded planner documents and rejects incomplete ones", () => {
+    expect(isPlannerDocument({ leaders: [], groups: [], items: [] })).toBe(true);
+    expect(isPlannerDocument({ leaders: [], groups: [] })).toBe(false);
+    expect(isPlannerDocument({ leaders: [], groups: [], items: new Array(1001).fill({}) })).toBe(false);
+  });
   it("normalises valid email addresses and rejects malformed input", () => {
     expect(normaliseEmail(" Parent@Example.ORG ")).toBe("parent@example.org");
     expect(normaliseEmail("not-an-address")).toBeNull();
