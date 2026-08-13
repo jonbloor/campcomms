@@ -1,6 +1,6 @@
 # 4th Ashby CampComms
 
-Current release: **v1.3.1**. This reliability release hardens secure sign-in email requests against transient Resend and delivery-logging failures. v1.3.0 introduced streamlined navigation and administration.
+Current release: **v1.3.2**. This release adds a public, one-page CampComms feature overview linked from the sign-in page. v1.3.1 hardened secure sign-in email delivery.
 
 A private, event-scoped progressive web application for parents and leaders. It is designed for camps, day trips, sleepovers and other activities without exposing personal telephone numbers.
 

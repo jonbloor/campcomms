@@ -205,6 +205,11 @@ app.get("/privacy", async (c) => {
   return new Response(asset.body, asset);
 });
 
+app.get("/features", async (c) => {
+  const asset = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url).toString(), { headers: c.req.raw.headers }));
+  return new Response(asset.body, asset);
+});
+
 app.get("/api/photo-guest", async (c) => {
   const access = await requirePhotoGuest(c);
   if (access instanceof Response) return access;

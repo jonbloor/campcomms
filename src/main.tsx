@@ -9,13 +9,14 @@ import { api, ApiError, type EventDetails, type EventSummary } from "./api";
 import { AdminTab, EventForm } from "./AdminTab";
 import { PhotosTab } from "./PhotosTab";
 import { PrivacyNotice } from "./PrivacyNotice";
+import { FeaturesPage } from "./FeaturesPage";
 import "./styles.css";
 
 type Me = { user: { id: string; email: string; displayName: string; parentOf: string; emailNotificationPreference: "daily" | "important_only" | "none"; isSystemAdmin: boolean }; children: Array<{ id: string; display_name: string }> };
 type Tab = "home" | "discuss" | "lost-found" | "lifts" | "photos" | "private" | "info" | "admin";
 
 function App() {
-  return window.location.pathname === "/privacy" ? <PrivacyNotice /> : <CampCommsApp />;
+  return window.location.pathname === "/privacy" ? <PrivacyNotice /> : window.location.pathname === "/features" ? <FeaturesPage /> : <CampCommsApp />;
 }
 
 function CampCommsApp() {
@@ -186,10 +187,10 @@ function SignIn({ error }: { error: string }) {
           <p>Enter the email address that received your invitation. We’ll send you a one-time link.</p>
           <label>Email address<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.org" required autoComplete="email" /></label>
           <button className="primary-button" disabled={busy}>{busy ? "Sending…" : "Email me a secure link"}<Send size={17} /></button>
-          <button type="button" className="request-access-button" onClick={() => setRequestingAccess(true)}>Not invited yet? Request access</button>
+          <button id="request-access" type="button" className="request-access-button" onClick={() => setRequestingAccess(true)}>Not invited yet? Request access</button>
           {message && <div className="form-message"><ShieldCheck size={19} /><span>{message}</span></div>}
           <small className="safety-note"><CircleAlert size={15} /> This service is not monitored for emergencies.</small>
-          <a className="privacy-link" href="/privacy">Privacy notice</a>
+          <div className="public-links"><a href="/features">What CampComms does</a><a href="/privacy">Privacy notice</a></div>
         </form>
       </div>
       {requestingAccess && <Modal title="Request access" onClose={() => setRequestingAccess(false)}><AccessRequestForm initialEmail={email} onDone={() => setRequestingAccess(false)} /></Modal>}

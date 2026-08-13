@@ -1,0 +1,21 @@
+import { Bell, Bus, Camera, Check, LockKeyhole, MessageCircle, PackageSearch, ShieldCheck, Smartphone, Users } from "lucide-react";
+
+const features = [
+  { icon: Bell, title: "Leader announcements", text: "Important updates in one reliable place, with optional acknowledgements, email summaries and mobile notifications." },
+  { icon: MessageCircle, title: "Event conversations", text: "Parents, Young Leaders and adult Leaders can ask questions and share useful information without exchanging personal details." },
+  { icon: LockKeyhole, title: "Private messages", text: "Parents can contact specifically authorised event Leaders privately when a message should not appear in the group conversation." },
+  { icon: Bus, title: "Lift sharing", text: "Families can offer or request lifts publicly within their event, while keeping exact addresses and arrangements private." },
+  { icon: Camera, title: "Private photos and videos", text: "Share event albums with members or invited photo-only guests. Access is controlled, recorded and covered by automatic retention." },
+  { icon: PackageSearch, title: "Lost & Found", text: "List missing or found belongings, discuss them with families and close an item once it has been reunited with its owner." },
+];
+
+export function FeaturesPage() {
+  return <main className="features-page">
+    <header className="features-header"><a className="features-brand" href="/"><span>4th Ashby</span><strong>CampComms</strong></a><nav><a href="/privacy">Privacy</a><a className="features-sign-in" href="/">Sign in</a></nav></header>
+    <section className="features-hero"><div><p className="eyebrow">Private event communications</p><h1>Everything families need for camp, in one place.</h1><p>CampComms helps 4th Ashby families and Leaders stay connected before, during and after camps, day trips and other activities—without sharing personal details.</p><div className="features-actions"><a className="primary-button" href="/">Sign in to CampComms</a><a className="secondary-button" href="/#request-access">Request access</a></div></div><div className="features-trust"><ShieldCheck size={34} /><strong>Private by design</strong><span>Invitation or approval required</span><span>No advertising or public profiles</span><span>Automatic post-event retention</span></div></section>
+    <section className="features-section"><div className="features-heading"><p className="eyebrow">For each adventure</p><h2>Clear communication without another group chat</h2><p>Every event has its own private hub, so information stays relevant and telephone numbers do not need to be shared.</p></div><div className="features-grid">{features.map(({ icon: Icon, title, text }) => <article key={title}><span><Icon size={23} /></span><h3>{title}</h3><p>{text}</p></article>)}</div></section>
+    <section className="features-audiences"><div><Users size={26} /><h2>Right access for each person</h2><ul><li><Check size={17} /><span><strong>Parents and carers</strong> can follow updates, join conversations, share lifts and view event albums.</span></li><li><Check size={17} /><span><strong>Young Leaders</strong> can participate and contribute photos, without access to private messages or lift sharing.</span></li><li><Check size={17} /><span><strong>Adult Leaders</strong> can use leader-only discussions and receive only the permissions they need.</span></li><li><Check size={17} /><span><strong>Photo guests</strong>, such as grandparents, can be invited to albums without seeing event conversations.</span></li></ul></div><div><Smartphone size={26} /><h2>Made for phones</h2><p>CampComms is a progressive web app: it works in a browser, can be added to a phone’s home screen and supports optional mobile notifications. Secure email links replace passwords.</p></div></section>
+    <section className="features-cta"><h2>Already invited?</h2><p>Use the email address supplied to the event organisers and CampComms will send a secure, one-use sign-in link.</p><a className="primary-button" href="/">Open CampComms</a></section>
+    <footer className="features-footer"><span>4th Ashby Scout Group · Registered charity 1125053</span><span><a href="/privacy">Privacy notice</a> · CampComms is not monitored for emergencies.</span></footer>
+  </main>;
+}
